@@ -1,15 +1,28 @@
-# api-demo
+# Tesser API Demo
 
-To install dependencies:
+E2E demo and integration reference for the Tesser stablecoin payments API.
 
-```bash
-bun install
-```
+## Setup
 
-To run:
+1. Install dependencies:
 
-```bash
-bun run index.ts
-```
+   ```bash
+   bun install
+   ```
 
-This project was created using `bun init` in bun v1.3.5. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+2. Copy the environment template and fill in your credentials:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   Edit `.env.local` with your Tesser sandbox credentials:
+
+   - `TESSER_CLIENT_ID` — your API client ID
+   - `TESSER_CLIENT_SECRET` — your API client secret
+
+3. Run the demo:
+
+   ```bash
+   bun run index.ts
+   ```
