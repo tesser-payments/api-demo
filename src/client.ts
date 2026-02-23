@@ -30,7 +30,9 @@ export async function authenticate(): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Auth failed (${res.status}): ${text}`);
+    throw new Error(
+      `Auth POST ${AUTH_URL} failed (${res.status})\n  Response: ${text}`,
+    );
   }
 
   const json = (await res.json()) as { access_token: string };
@@ -44,7 +46,8 @@ export async function authenticate(): Promise<string> {
 export async function get<T = unknown>(path: string): Promise<T> {
   if (!token) throw new Error("Not authenticated — call authenticate() first");
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const url = `${BASE_URL}${path}`;
+  const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -53,7 +56,7 @@ export async function get<T = unknown>(path: string): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GET ${path} failed (${res.status}): ${text}`);
+    throw new Error(`GET ${url} failed (${res.status})\n  Response: ${text}`);
   }
 
   return (await res.json()) as T;
@@ -66,8 +69,27 @@ export async function post<T = unknown>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  // TODO: fetch POST BASE_URL + path with JSON body and Authorization header
-  throw new Error("TODO: implement post()");
+  if (!token) throw new Error("Not authenticated — call authenticate() first");
+
+  const url = `${BASE_URL}${path}`;
+  const serialized = JSON.stringify(body);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: serialized,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `POST ${url} failed (${res.status})\n  Request body: ${serialized}\n  Response:     ${text}`,
+    );
+  }
+
+  return (await res.json()) as T;
 }
 
 /**
@@ -77,6 +99,25 @@ export async function patch<T = unknown>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  // TODO: fetch PATCH BASE_URL + path with JSON body and Authorization header
-  throw new Error("TODO: implement patch()");
+  if (!token) throw new Error("Not authenticated — call authenticate() first");
+
+  const url = `${BASE_URL}${path}`;
+  const serialized = JSON.stringify(body);
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: serialized,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `PATCH ${url} failed (${res.status})\n  Request body: ${serialized}\n  Response:     ${text}`,
+    );
+  }
+
+  return (await res.json()) as T;
 }

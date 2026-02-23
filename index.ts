@@ -1,3 +1,4 @@
+import { faker } from "@faker-js/faker";
 import { authenticate, get, post } from "./src/client.ts";
 import type {
   IAccount,
@@ -64,12 +65,44 @@ async function step3_setupEntities(): Promise<{
   ledgerAccountId: string;
   walletAccountId: string;
 }> {
-  // TODO:
-  // 1. POST /v1/entities/counterparties — create individual counterparty
-  // 2. POST /v1/accounts/ledgers — create ledger account for counterparty
-  // 3. POST /v1/accounts/wallets — create unmanaged recipient wallet for counterparty
-  // Return all three IDs
-  throw new Error("TODO: implement step3_setupEntities");
+  // 1. Create business counterparty (CIRCLE_MINT requires a business entity)
+  const counterparty = await post<{ data: { id: string } }>(
+    "/v1/entities/counterparties",
+    {
+      classification: "business",
+      businessLegalName: faker.company.name(),
+      businessAddressCountry: "US",
+      businessStreetAddress1: faker.location.streetAddress(),
+      businessCity: faker.location.city(),
+      businessState: faker.location.state({ abbreviated: true }),
+      businessPostalCode: faker.location.zipCode(),
+      businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+    },
+  );
+  const counterpartyId = counterparty.data.id;
+
+  // 2. Create ledger account (Circle Mint funding source)
+  const ledger = await post<{ data: { id: string } }>("/v1/accounts/ledgers", {
+    name: `${faker.company.name()} Ledger`,
+    provider: "CIRCLE_MINT",
+    counterpartyId,
+  });
+  const ledgerAccountId = ledger.data.id;
+
+  // 3. Create unmanaged recipient wallet
+  const wallet = await post<{ data: { id: string } }>(
+    "/v1/accounts/wallets",
+    {
+      name: `${faker.company.name()} Wallet`,
+      type: "stablecoin_stellar",
+      isManaged: false,
+      walletAddress: "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
+      counterpartyId,
+    },
+  );
+  const walletAccountId = wallet.data.id;
+
+  return { counterpartyId, ledgerAccountId, walletAccountId };
 }
 
 // ---------------------------------------------------------------------------
