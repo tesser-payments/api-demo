@@ -26,3 +26,44 @@ E2E demo and integration reference for the Tesser stablecoin payments API.
    ```bash
    bun run index.ts
    ```
+
+## CI / Cross-repo trigger
+
+The E2E workflow (`.github/workflows/e2e.yml`) runs automatically when `tesser-payments/platform` merges to main, and can also be triggered manually from the Actions tab.
+
+**Triggers:**
+
+- `repository_dispatch` — fired by the platform repo after a deploy to main
+- `workflow_dispatch` — manual trigger from the GitHub Actions tab
+
+### Secrets to configure in this repo (`api-demo`)
+
+| Secret | Description |
+|--------|-------------|
+| `TESSER_CLIENT_ID` | Tesser sandbox API client ID |
+| `TESSER_CLIENT_SECRET` | Tesser sandbox API client secret |
+
+### Platform repo setup (`tesser-payments/platform`)
+
+1. Create a **fine-grained GitHub PAT** scoped to `tesser-payments/api-demo` with **Contents: Read and write** permission
+2. Add it as the `API_DEMO_PAT` secret in `tesser-payments/platform`
+3. Create `.github/workflows/trigger-e2e.yml` in the platform repo:
+
+   ```yaml
+   name: Trigger API Demo E2E
+
+   on:
+     push:
+       branches: [main]
+
+   jobs:
+     trigger:
+       runs-on: ubuntu-latest
+       steps:
+         - name: Dispatch to api-demo
+           uses: peter-evans/repository-dispatch@v3
+           with:
+             token: ${{ secrets.API_DEMO_PAT }}
+             repository: tesser-payments/api-demo
+             event-type: platform-deploy
+   ```
