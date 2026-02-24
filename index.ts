@@ -60,60 +60,131 @@ async function step2_displayCurrentState(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Step 3: Create counterparty, ledger account, and recipient wallet
 // ---------------------------------------------------------------------------
-async function step3_setupEntities(): Promise<{
-  counterpartyId: string;
+async function step3_setupEntities(tenantId?: string): Promise<{
+  customerCounterpartyId: string;
+  customerCounterpartyName: string;
+  beneficiaryCounterpartyId: string;
+  beneficiaryCounterpartyName: string;
   ledgerAccountId: string;
+  ledgerName: string;
   walletAccountId: string;
+  walletName: string;
+  bankAccountId: string;
+  bankName: string;
 }> {
-  // 1. Create business counterparty (CIRCLE_MINT requires a business entity)
-  const counterparty = await post<{ data: { id: string } }>(
+  // 1. Create customer counterparty (business — owns ledger + bank)
+  const customerName = faker.company.name();
+  const customer = await post<{ data: { id: string } }>(
     "/v1/entities/counterparties",
     {
       classification: "business",
-      businessLegalName: faker.company.name(),
+      businessLegalName: customerName,
       businessAddressCountry: "US",
       businessStreetAddress1: faker.location.streetAddress(),
       businessCity: faker.location.city(),
       businessState: faker.location.state({ abbreviated: true }),
       businessPostalCode: faker.location.zipCode(),
       businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+      ...(tenantId && { tenantId }),
     },
   );
-  const counterpartyId = counterparty.data.id;
+  const customerCounterpartyId = customer.data.id;
 
-  // 2. Create ledger account (Circle Mint funding source)
+  // 2. Create beneficiary counterparty (individual or business — owns wallet)
+  const isIndividual = Math.random() > 0.5;
+  let beneficiaryName: string;
+  let beneficiaryPayload: Record<string, unknown>;
+
+  if (isIndividual) {
+    const firstName = faker.person.firstName();
+    const lastName = faker.person.lastName();
+    beneficiaryName = `${firstName} ${lastName}`;
+    beneficiaryPayload = {
+      classification: "individual",
+      individualFirstName: firstName,
+      individualLastName: lastName,
+      individualAddressCountry: "US",
+      individualStreetAddress1: faker.location.streetAddress(),
+      individualCity: faker.location.city(),
+      individualState: faker.location.state({ abbreviated: true }),
+      individualPostalCode: faker.location.zipCode(),
+    };
+  } else {
+    beneficiaryName = faker.company.name();
+    beneficiaryPayload = {
+      classification: "business",
+      businessLegalName: beneficiaryName,
+      businessAddressCountry: "US",
+      businessStreetAddress1: faker.location.streetAddress(),
+      businessCity: faker.location.city(),
+      businessState: faker.location.state({ abbreviated: true }),
+      businessPostalCode: faker.location.zipCode(),
+    };
+  }
+
+  const beneficiary = await post<{ data: { id: string } }>(
+    "/v1/entities/counterparties",
+    { ...beneficiaryPayload, ...(tenantId && { tenantId }) },
+  );
+  const beneficiaryCounterpartyId = beneficiary.data.id;
+
+  // 3. Create ledger account (Circle Mint funding source — customer)
+  const ledgerName = `${customerName}'s Ledger`;
   const ledger = await post<{ data: { id: string } }>("/v1/accounts/ledgers", {
-    name: `${faker.company.name()} Ledger`,
+    name: ledgerName,
     provider: "CIRCLE_MINT",
-    counterpartyId,
+    counterpartyId: customerCounterpartyId,
   });
   const ledgerAccountId = ledger.data.id;
 
-  // 3. Create unmanaged recipient wallet
+  // 4. Create unmanaged recipient wallet (beneficiary)
+  const walletName = `${beneficiaryName}'s Wallet`;
   const wallet = await post<{ data: { id: string } }>(
     "/v1/accounts/wallets",
     {
-      name: `${faker.company.name()} Wallet`,
+      name: walletName,
       type: "stablecoin_stellar",
       isManaged: false,
       walletAddress: "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
-      counterpartyId,
+      counterpartyId: beneficiaryCounterpartyId,
     },
   );
   const walletAccountId = wallet.data.id;
 
-  return { counterpartyId, ledgerAccountId, walletAccountId };
+  // 5. Create unmanaged fiat bank account (customer)
+  const bankName = faker.helpers.arrayElement([
+    "Chase Checking",
+    "Wells Fargo Checking",
+    "BofA Checking",
+    "Citi Savings",
+    "US Bank Checking",
+    "PNC Checking",
+  ]);
+  const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name: bankName,
+    bankName: bankName.split(" ")[0],
+    bankCodeType: "ROUTING",
+    bankIdentifierCode: faker.finance.routingNumber(),
+    bankAccountNumber: faker.finance.accountNumber(),
+  });
+  const bankAccountId = bank.data.id;
+
+  return {
+    customerCounterpartyId, customerCounterpartyName: customerName,
+    beneficiaryCounterpartyId, beneficiaryCounterpartyName: beneficiaryName,
+    ledgerAccountId, ledgerName, walletAccountId, walletName, bankAccountId, bankName,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Display ledger deposit address
+// Step 4: Create deposit (USD → USDC into ledger account)
 // ---------------------------------------------------------------------------
-async function step4_displayDepositAddress(
-  ledgerAccountId: string,
-): Promise<void> {
-  // TODO: GET /v1/accounts/{ledgerAccountId}
-  // Print the deposit address from the account response
-  throw new Error("TODO: implement step4_displayDepositAddress");
+async function step4_createDeposit(
+  fromAccountId: string,
+  toAccountId: string,
+): Promise<string> {
+  throw new Error("TODO: implement step4_createDeposit");
+
 }
 
 // ---------------------------------------------------------------------------
@@ -157,26 +228,38 @@ async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Run steps 3–7 for a given variant
 // ---------------------------------------------------------------------------
-async function main() {
-  console.log("=== Tesser API E2E Demo ===\n");
+interface VariantEntities {
+  customerCounterpartyId: string;
+  customerCounterpartyName: string;
+  beneficiaryCounterpartyId: string;
+  beneficiaryCounterpartyName: string;
+  ledgerAccountId: string;
+  ledgerName: string;
+  walletAccountId: string;
+  walletName: string;
+  bankAccountId: string;
+  bankName: string;
+}
 
-  console.log("[Step 1] Authenticating...");
-  await step1_authenticate();
+async function runStep3(tenantId?: string): Promise<VariantEntities> {
+  console.log("\n[Step 3] Creating counterparty, ledger, wallet, and bank account...");
+  const entities = await step3_setupEntities(tenantId);
+  console.log(`  Customer counterparty:          ${entities.customerCounterpartyName} (${entities.customerCounterpartyId})`);
+  console.log(`  Beneficiary counterparty:       ${entities.beneficiaryCounterpartyName} (${entities.beneficiaryCounterpartyId})`);
+  console.log(`  Customer ledger (Circle):       ${entities.ledgerName} (${entities.ledgerAccountId})`);
+  console.log(`  Beneficiary wallet (unmanaged): ${entities.walletName} (${entities.walletAccountId})`);
+  console.log(`  Funding bank (unmanaged):       ${entities.bankName} (${entities.bankAccountId})`);
+  return entities;
+}
 
-  console.log("\n[Step 2] Fetching current state...");
-  await step2_displayCurrentState();
+async function runSteps4Through7(entities: VariantEntities): Promise<void> {
+  const { ledgerAccountId, walletAccountId, bankAccountId } = entities;
 
-  console.log("\n[Step 3] Creating counterparty, ledger, and recipient wallet...");
-  const { counterpartyId, ledgerAccountId, walletAccountId } =
-    await step3_setupEntities();
-  console.log(`  Counterparty: ${counterpartyId}`);
-  console.log(`  Ledger:       ${ledgerAccountId}`);
-  console.log(`  Wallet:       ${walletAccountId}`);
-
-  console.log("\n[Step 4] Deposit address:");
-  await step4_displayDepositAddress(ledgerAccountId);
+  console.log("\n[Step 4] Creating deposit (1000 USD → USDC)...");
+  const depositId = await step4_createDeposit(bankAccountId, ledgerAccountId);
+  console.log(`  Deposit ID: ${depositId}`);
 
   console.log("\n[Step 5] Waiting for manual deposit...");
   await step5_waitForDeposit();
@@ -190,6 +273,47 @@ async function main() {
 
   console.log("\n[Step 7] Polling payment until complete...");
   await step7_pollPaymentCompletion(paymentId);
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+async function main() {
+  console.log("=== Tesser API E2E Demo ===\n");
+
+  console.log("[Step 1] Authenticating...");
+  await step1_authenticate();
+
+  console.log("\n[Step 2] Fetching current state...");
+  await step2_displayCurrentState();
+
+  // --- Variant A: Org-level (no tenant) ---
+  console.log("\n=== Variant A: Org-level ===");
+  const variantA = await runStep3();
+
+  // --- Variant B: Tenant-level ---
+  console.log("\n=== Variant B: Tenant-level ===");
+
+  console.log("\n[Tenant] Creating tenant...");
+  const tenantName = faker.company.name();
+  const tenant = await post<{ data: { tenant: { id: string } } }>(
+    "/v1/entities/tenants",
+    {
+      businessLegalName: tenantName,
+      businessAddressCountry: "US",
+    },
+  );
+  const tenantId = tenant.data.tenant.id;
+  console.log(`  Tenant: ${tenantName} (${tenantId})`);
+
+  const variantB = await runStep3(tenantId);
+
+  // --- Run steps 4–7 for each variant ---
+  console.log("\n=== Variant A: Steps 4–7 ===");
+  await runSteps4Through7(variantA);
+
+  console.log("\n=== Variant B: Steps 4–7 ===");
+  await runSteps4Through7(variantB);
 
   console.log("\n=== Demo complete ===");
 }
