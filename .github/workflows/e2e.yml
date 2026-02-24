@@ -16,3 +16,32 @@ jobs:
         env:
           TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.TESSER_AUTH_URL }}
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":red_circle: *E2E Tests failed*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
+                    { "type": "mrkdwn", "text": "*Trigger:*\n${{ github.event_name }}" },
+                    { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
+                    { "type": "mrkdwn", "text": "*Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>" }
+                  ]
+                }
+              ]
+            }

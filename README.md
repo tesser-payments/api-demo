@@ -42,6 +42,9 @@ The E2E workflow (`.github/workflows/e2e.yml`) runs automatically when `tesser-p
 |--------|-------------|
 | `TESSER_CLIENT_ID` | Tesser sandbox API client ID |
 | `TESSER_CLIENT_SECRET` | Tesser sandbox API client secret |
+| `TESSER_BASE_URL` | Tesser sandbox base URL (e.g. `https://sandbox.tesserx.co`) |
+| `TESSER_AUTH_URL` | Auth token endpoint URL |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL for failure notifications |
 
 ### Platform repo setup (`tesser-payments/platform`)
 
