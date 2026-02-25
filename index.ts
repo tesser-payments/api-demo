@@ -19,7 +19,7 @@ async function step1_authenticate(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Step 2: Display current state (all list endpoints)
 // ---------------------------------------------------------------------------
-async function step2_displayCurrentState(): Promise<void> {
+async function step2_displayCurrentState(): Promise<string> {
   const currencies = await get<{ data: { name: string; key: string; decimals: number; network: string | null }[] }>("/v1/currencies");
   console.log(`  Currencies:     ${currencies.data.length}`);
   for (const c of currencies.data) {
@@ -55,6 +55,21 @@ async function step2_displayCurrentState(): Promise<void> {
   for (const p of payments.data) {
     console.log(`    - ${p.id}  ${p.direction}  ${p.fromAmount} ${p.fromCurrency} → ${p.toAmount} ${p.toCurrency}`);
   }
+
+  // Find pre-existing org-level fiat bank account (unmanaged, no tenant, no counterparty)
+  const fundingBank = accounts.data.find(
+    (a) => a.type === "fiat_bank" && a.isManaged === false && !a.tenantId && !a.counterpartyId,
+  );
+  if (fundingBank) {
+    console.log(`  Funding bank:   ${fundingBank.name} (${fundingBank.id})`);
+    return fundingBank.id;
+  }
+  const fallbackId = process.env.FALLBACK_FUNDING_BANK_ACCOUNT_ID;
+  if (!fallbackId) {
+    throw new Error("No fiat_bank account found and FALLBACK_FUNDING_BANK_ACCOUNT_ID is not set");
+  }
+  console.log(`  Funding bank:   (fallback) ${fallbackId}`);
+  return fallbackId;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,8 +84,6 @@ async function step3_setupEntities(tenantId?: string): Promise<{
   ledgerName: string;
   walletAccountId: string;
   walletName: string;
-  bankAccountId: string;
-  bankName: string;
 }> {
   // 1. Create customer counterparty (business — owns ledger + bank)
   const customerName = faker.company.name();
@@ -79,6 +92,7 @@ async function step3_setupEntities(tenantId?: string): Promise<{
     {
       classification: "business",
       businessLegalName: customerName,
+      businessDba: customerName,
       businessAddressCountry: "US",
       businessStreetAddress1: faker.location.streetAddress(),
       businessCity: faker.location.city(),
@@ -114,6 +128,7 @@ async function step3_setupEntities(tenantId?: string): Promise<{
     beneficiaryPayload = {
       classification: "business",
       businessLegalName: beneficiaryName,
+      businessDba: beneficiaryName,
       businessAddressCountry: "US",
       businessStreetAddress1: faker.location.streetAddress(),
       businessCity: faker.location.city(),
@@ -151,28 +166,10 @@ async function step3_setupEntities(tenantId?: string): Promise<{
   );
   const walletAccountId = wallet.data.id;
 
-  // 5. Create unmanaged fiat bank account (customer)
-  const bankName = faker.helpers.arrayElement([
-    "Chase Checking",
-    "Wells Fargo Checking",
-    "BofA Checking",
-    "Citi Savings",
-    "US Bank Checking",
-    "PNC Checking",
-  ]);
-  const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
-    name: bankName,
-    bankName: bankName.split(" ")[0],
-    bankCodeType: "ROUTING",
-    bankIdentifierCode: faker.finance.routingNumber(),
-    bankAccountNumber: faker.finance.accountNumber(),
-  });
-  const bankAccountId = bank.data.id;
-
   return {
     customerCounterpartyId, customerCounterpartyName: customerName,
     beneficiaryCounterpartyId, beneficiaryCounterpartyName: beneficiaryName,
-    ledgerAccountId, ledgerName, walletAccountId, walletName, bankAccountId, bankName,
+    ledgerAccountId, ledgerName, walletAccountId, walletName,
   };
 }
 
@@ -183,8 +180,30 @@ async function step4_createDeposit(
   fromAccountId: string,
   toAccountId: string,
 ): Promise<string> {
-  throw new Error("TODO: implement step4_createDeposit");
+  const maxAttempts = 20;
+  const retryIntervalMs = 30_000;
 
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const deposit = await post<{ data: { id: string } }>(
+        "/v1/treasury/deposits",
+        {
+          from_currency: "USD",
+          to_currency: "USDC",
+          from_amount: "1000",
+          from_account_id: fromAccountId,
+          to_account_id: toAccountId,
+        },
+      );
+      return deposit.data.id;
+    } catch (err) {
+      console.log(`  Deposit attempt ${attempt}/${maxAttempts} failed: ${(err as Error).message}`);
+      if (attempt === maxAttempts) throw err;
+      console.log(`  Retrying in ${retryIntervalMs / 1000}s...`);
+      await new Promise((r) => setTimeout(r, retryIntervalMs));
+    }
+  }
+  throw new Error("Unreachable");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,8 +258,6 @@ interface VariantEntities {
   ledgerName: string;
   walletAccountId: string;
   walletName: string;
-  bankAccountId: string;
-  bankName: string;
 }
 
 async function runStep3(tenantId?: string): Promise<VariantEntities> {
@@ -250,12 +267,11 @@ async function runStep3(tenantId?: string): Promise<VariantEntities> {
   console.log(`  Beneficiary counterparty:       ${entities.beneficiaryCounterpartyName} (${entities.beneficiaryCounterpartyId})`);
   console.log(`  Customer ledger (Circle):       ${entities.ledgerName} (${entities.ledgerAccountId})`);
   console.log(`  Beneficiary wallet (unmanaged): ${entities.walletName} (${entities.walletAccountId})`);
-  console.log(`  Funding bank (unmanaged):       ${entities.bankName} (${entities.bankAccountId})`);
   return entities;
 }
 
-async function runSteps4Through7(entities: VariantEntities): Promise<void> {
-  const { ledgerAccountId, walletAccountId, bankAccountId } = entities;
+async function runSteps4Through7(entities: VariantEntities, bankAccountId: string): Promise<void> {
+  const { ledgerAccountId, walletAccountId } = entities;
 
   console.log("\n[Step 4] Creating deposit (1000 USD → USDC)...");
   const depositId = await step4_createDeposit(bankAccountId, ledgerAccountId);
@@ -285,7 +301,7 @@ async function main() {
   await step1_authenticate();
 
   console.log("\n[Step 2] Fetching current state...");
-  await step2_displayCurrentState();
+  const bankAccountId = await step2_displayCurrentState();
 
   // --- Variant A: Org-level (no tenant) ---
   console.log("\n=== Variant A: Org-level ===");
@@ -300,6 +316,7 @@ async function main() {
     "/v1/entities/tenants",
     {
       businessLegalName: tenantName,
+      businessDba: tenantName,
       businessAddressCountry: "US",
     },
   );
@@ -310,10 +327,10 @@ async function main() {
 
   // --- Run steps 4–7 for each variant ---
   console.log("\n=== Variant A: Steps 4–7 ===");
-  await runSteps4Through7(variantA);
+  await runSteps4Through7(variantA, bankAccountId);
 
   console.log("\n=== Variant B: Steps 4–7 ===");
-  await runSteps4Through7(variantB);
+  await runSteps4Through7(variantB, bankAccountId);
 
   console.log("\n=== Demo complete ===");
 }

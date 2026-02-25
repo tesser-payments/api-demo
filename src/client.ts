@@ -4,6 +4,7 @@ const AUTH_URL =
   "https://dev-awqy75wdabpsnsvu.us.auth0.com/oauth/token";
 const CLIENT_ID = process.env.TESSER_CLIENT_ID;
 const CLIENT_SECRET = process.env.TESSER_CLIENT_SECRET;
+const DEBUG = !!process.env.DEBUG_MODE && process.env.DEBUG_MODE !== "0";
 
 let token: string | null = null;
 
@@ -15,6 +16,10 @@ export async function authenticate(): Promise<string> {
     throw new Error(
       "Missing TESSER_CLIENT_ID or TESSER_CLIENT_SECRET in environment",
     );
+  }
+
+  if (DEBUG) {
+    console.log("[DEBUG] POST", AUTH_URL, { client_id: CLIENT_ID, audience: BASE_URL, grant_type: "client_credentials" });
   }
 
   const res = await fetch(AUTH_URL, {
@@ -36,6 +41,7 @@ export async function authenticate(): Promise<string> {
   }
 
   const json = (await res.json()) as { access_token: string };
+  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
   token = json.access_token;
   return token;
 }
@@ -47,6 +53,8 @@ export async function get<T = unknown>(path: string): Promise<T> {
   if (!token) throw new Error("Not authenticated — call authenticate() first");
 
   const url = `${BASE_URL}${path}`;
+  if (DEBUG) console.log("[DEBUG] GET", url);
+
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -59,7 +67,9 @@ export async function get<T = unknown>(path: string): Promise<T> {
     throw new Error(`GET ${url} failed (${res.status})\n  Response: ${text}`);
   }
 
-  return (await res.json()) as T;
+  const json = (await res.json()) as T;
+  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
+  return json;
 }
 
 /**
@@ -73,6 +83,8 @@ export async function post<T = unknown>(
 
   const url = `${BASE_URL}${path}`;
   const serialized = JSON.stringify(body);
+  if (DEBUG) console.log("[DEBUG] POST", url, body);
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -89,7 +101,9 @@ export async function post<T = unknown>(
     );
   }
 
-  return (await res.json()) as T;
+  const json = (await res.json()) as T;
+  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
+  return json;
 }
 
 /**
@@ -103,6 +117,8 @@ export async function patch<T = unknown>(
 
   const url = `${BASE_URL}${path}`;
   const serialized = JSON.stringify(body);
+  if (DEBUG) console.log("[DEBUG] PATCH", url, body);
+
   const res = await fetch(url, {
     method: "PATCH",
     headers: {
@@ -119,5 +135,7 @@ export async function patch<T = unknown>(
     );
   }
 
-  return (await res.json()) as T;
+  const json = (await res.json()) as T;
+  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
+  return json;
 }
