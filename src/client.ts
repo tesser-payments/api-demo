@@ -68,7 +68,7 @@ export async function get<T = unknown>(path: string): Promise<T> {
   }
 
   const json = (await res.json()) as T;
-  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
+  if (DEBUG) console.log("[DEBUG] RESPONSE", JSON.stringify(json, null, 2));
   return json;
 }
 
@@ -102,7 +102,7 @@ export async function post<T = unknown>(
   }
 
   const json = (await res.json()) as T;
-  if (DEBUG) console.log("[DEBUG] RESPONSE", json);
+  if (DEBUG) console.log("[DEBUG] RESPONSE", JSON.stringify(json, null, 2));
   return json;
 }
 

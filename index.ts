@@ -134,6 +134,7 @@ async function step3_setupEntities(tenantId?: string): Promise<{
       businessCity: faker.location.city(),
       businessState: faker.location.state({ abbreviated: true }),
       businessPostalCode: faker.location.zipCode(),
+      businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
     };
   }
 
@@ -160,7 +161,7 @@ async function step3_setupEntities(tenantId?: string): Promise<{
       name: walletName,
       type: "stablecoin_stellar",
       isManaged: false,
-      walletAddress: "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
+      walletAddress: process.env.BENEFICIARY_WALLET_ADDRESS || "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
       counterpartyId: beneficiaryCounterpartyId,
     },
   );
@@ -179,23 +180,41 @@ async function step3_setupEntities(tenantId?: string): Promise<{
 async function step4_createDeposit(
   fromAccountId: string,
   toAccountId: string,
-): Promise<string> {
-  const maxAttempts = 20;
-  const retryIntervalMs = 30_000;
+): Promise<{ depositId: string; instructions: Record<string, unknown> }> {
+  const maxAttempts = 60;
+  const retryIntervalMs = 10_000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const deposit = await post<{ data: { id: string } }>(
         "/v1/treasury/deposits",
         {
-          from_currency: "USD",
-          to_currency: "USDC",
-          from_amount: "1000",
-          from_account_id: fromAccountId,
-          to_account_id: toAccountId,
+          fromCurrency: "USD",
+          toCurrency: "USDC",
+          fromAmount: "100",
+          fromAccountId: fromAccountId,
+          toAccountId: toAccountId,
         },
       );
-      return deposit.data.id;
+      // Fetch deposit instructions with retry (30s interval, 10min max)
+      const depositId = deposit.data.id;
+      const instrMaxAttempts = 60;
+      const instrRetryMs = 10_000;
+      for (let instrAttempt = 1; instrAttempt <= instrMaxAttempts; instrAttempt++) {
+        try {
+          const instructions = await get<{ data: Record<string, unknown> }>(
+            `/v1/treasury/deposits/${depositId}/instructions`,
+          );
+          console.log("  Deposit instructions:", JSON.stringify(instructions.data, null, 2));
+          return { depositId, instructions: instructions.data };
+        } catch (err) {
+          console.log(`  Instructions attempt ${instrAttempt}/${instrMaxAttempts} failed: ${(err as Error).message}`);
+          if (instrAttempt === instrMaxAttempts) throw err;
+          console.log(`  Retrying in ${instrRetryMs / 1000}s...`);
+          await new Promise((r) => setTimeout(r, instrRetryMs));
+        }
+      }
+      throw new Error("Failed to fetch deposit instructions after all retries");
     } catch (err) {
       console.log(`  Deposit attempt ${attempt}/${maxAttempts} failed: ${(err as Error).message}`);
       if (attempt === maxAttempts) throw err;
@@ -207,43 +226,89 @@ async function step4_createDeposit(
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Wait for user to confirm manual deposit
+// Step 5: Simulate deposit via Circle sandbox mock wire
 // ---------------------------------------------------------------------------
-async function step5_waitForDeposit(): Promise<void> {
-  // TODO: prompt user to press any key after depositing funds manually
-  throw new Error("TODO: implement step5_waitForDeposit");
+async function step5_simulateDeposit(instructions: Record<string, unknown>): Promise<void> {
+  const circleApiKey = process.env.CIRCLE_API_KEY;
+  if (!circleApiKey) throw new Error("CIRCLE_API_KEY is not set");
+
+  const toAccount = instructions.toAccount as Record<string, unknown>;
+  const metadata = toAccount.metadata as Record<string, unknown>;
+  const body = {
+    trackingRef: metadata.trackingRef,
+    amount: { amount: "100", currency: "USD" },
+    beneficiaryBank: { accountNumber: toAccount.accountNumber },
+  };
+  console.log("  Mock wire request:", JSON.stringify(body, null, 2));
+
+  const res = await fetch("https://api-sandbox.circle.com/v1/mocks/payments/wire", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${circleApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Circle mock wire failed (${res.status})\n  Response: ${text}`);
+  }
+
+  const json = await res.json();
+  console.log("  Mock wire response:", JSON.stringify(json, null, 2));
 }
 
 // ---------------------------------------------------------------------------
 // Step 6: Create payment (ledger → recipient wallet, 0.01 USDC)
 // ---------------------------------------------------------------------------
 async function step6_createPayment(
+  fundingAccountId: string,
   fromAccountId: string,
   toAccountId: string,
 ): Promise<string> {
-  // TODO: POST /v1/payments
-  // {
-  //   direction: "outbound",
-  //   from_account_id: fromAccountId,
-  //   to_account_id: toAccountId,
-  //   from_amount: "0.01",
-  //   from_currency: "USDC",
-  //   from_network: "POLYGON",
-  //   to_currency: "USDC",
-  //   to_network: "POLYGON",
-  // }
-  // Return the payment ID
-  throw new Error("TODO: implement step6_createPayment");
+  const payment = await post<{ data: { id: string } }>("/v1/payments", {
+    direction: "outbound",
+    fundingAccountId: fundingAccountId,
+    fromAccountId: fromAccountId,
+    toAccountId: toAccountId,
+    fromAmount: "10.03",
+    fromCurrency: "USDC",
+    toCurrency: "USDC",
+    toNetwork: "STELLAR",
+  });
+  return payment.data.id;
 }
 
 // ---------------------------------------------------------------------------
 // Step 7: Poll payment until complete
 // ---------------------------------------------------------------------------
 async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
-  // TODO: GET /v1/payments/{paymentId} in a loop
-  // Check step statuses — stop when all steps are "completed" or any is "failed"
-  // Log status on each poll iteration
-  throw new Error("TODO: implement step7_pollPaymentCompletion");
+  const maxAttempts = 60;
+  const pollIntervalMs = 10_000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const payment = await get<{ data: IPayment }>(`/v1/payments/${paymentId}`);
+    const steps = payment.data.steps ?? [];
+
+    const failedStep = steps.find((s) => s.status === "failed");
+    if (failedStep) {
+      throw new Error(`Step ${failedStep.stepSequence} failed: ${failedStep.statusReasons}`);
+    }
+
+    const stepStatuses = steps.map((s) => `step${s.stepSequence}=${s.status}`).join(", ");
+    console.log(`  Poll ${attempt}/${maxAttempts}: ${stepStatuses}`);
+
+    if (steps.length >= 2 && steps[1]?.confirmedAt) {
+      console.log(`  Second step confirmed at ${steps[1]!.confirmedAt}`);
+      return;
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+  }
+  throw new Error("Payment did not complete within 10 minutes");
 }
 
 // ---------------------------------------------------------------------------
@@ -273,15 +338,16 @@ async function runStep3(tenantId?: string): Promise<VariantEntities> {
 async function runSteps4Through7(entities: VariantEntities, bankAccountId: string): Promise<void> {
   const { ledgerAccountId, walletAccountId } = entities;
 
-  console.log("\n[Step 4] Creating deposit (1000 USD → USDC)...");
-  const depositId = await step4_createDeposit(bankAccountId, ledgerAccountId);
+  console.log("\n[Step 4] Creating deposit (100 USD → USDC)...");
+  const { depositId, instructions } = await step4_createDeposit(bankAccountId, ledgerAccountId);
   console.log(`  Deposit ID: ${depositId}`);
 
-  console.log("\n[Step 5] Waiting for manual deposit...");
-  await step5_waitForDeposit();
+  console.log("\n[Step 5] Simulating deposit via Circle mock wire...");
+  await step5_simulateDeposit(instructions);
 
   console.log("\n[Step 6] Creating payment (0.01 USDC)...");
   const paymentId = await step6_createPayment(
+    bankAccountId,
     ledgerAccountId,
     walletAccountId,
   );
@@ -303,34 +369,50 @@ async function main() {
   console.log("\n[Step 2] Fetching current state...");
   const bankAccountId = await step2_displayCurrentState();
 
+  const enableVariants = (process.env.ENABLE_VARIANTS || "BOTH").toUpperCase();
+  const runA = enableVariants === "A" || enableVariants === "BOTH";
+  const runB = enableVariants === "B" || enableVariants === "BOTH";
+
+  let variantA: VariantEntities | undefined;
+  let variantB: VariantEntities | undefined;
+
   // --- Variant A: Org-level (no tenant) ---
-  console.log("\n=== Variant A: Org-level ===");
-  const variantA = await runStep3();
+  if (runA) {
+    console.log("\n=== Variant A: Org-level ===");
+    variantA = await runStep3();
+  }
 
   // --- Variant B: Tenant-level ---
-  console.log("\n=== Variant B: Tenant-level ===");
+  if (runB) {
+    console.log("\n=== Variant B: Tenant-level ===");
 
-  console.log("\n[Tenant] Creating tenant...");
-  const tenantName = faker.company.name();
-  const tenant = await post<{ data: { tenant: { id: string } } }>(
-    "/v1/entities/tenants",
-    {
-      businessLegalName: tenantName,
-      businessDba: tenantName,
-      businessAddressCountry: "US",
-    },
-  );
-  const tenantId = tenant.data.tenant.id;
-  console.log(`  Tenant: ${tenantName} (${tenantId})`);
+    console.log("\n[Tenant] Creating tenant...");
+    const tenantName = faker.company.name();
+    const tenant = await post<{ data: { tenant: { id: string } } }>(
+      "/v1/entities/tenants",
+      {
+        businessLegalName: tenantName,
+        businessDba: tenantName,
+        businessAddressCountry: "US",
+        businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+      },
+    );
+    const tenantId = tenant.data.tenant.id;
+    console.log(`  Tenant: ${tenantName} (${tenantId})`);
 
-  const variantB = await runStep3(tenantId);
+    variantB = await runStep3(tenantId);
+  }
 
   // --- Run steps 4–7 for each variant ---
-  console.log("\n=== Variant A: Steps 4–7 ===");
-  await runSteps4Through7(variantA, bankAccountId);
+  if (runA && variantA) {
+    console.log("\n=== Variant A: Steps 4–7 ===");
+    await runSteps4Through7(variantA, bankAccountId);
+  }
 
-  console.log("\n=== Variant B: Steps 4–7 ===");
-  await runSteps4Through7(variantB, bankAccountId);
+  if (runB && variantB) {
+    console.log("\n=== Variant B: Steps 4–7 ===");
+    await runSteps4Through7(variantB, bankAccountId);
+  }
 
   console.log("\n=== Demo complete ===");
 }
