@@ -299,8 +299,8 @@ async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
     const stepStatuses = steps.map((s) => `step${s.stepSequence}=${s.status}`).join(", ");
     console.log(`  Poll ${attempt}/${maxAttempts}: ${stepStatuses}`);
 
-    if (steps.length >= 2 && steps[1]?.confirmedAt) {
-      console.log(`  Second step confirmed at ${steps[1]!.confirmedAt}`);
+    if (steps.length >= 1 && steps[0]?.finalizedAt) {
+      console.log(`  First step finalized at ${steps[0]!.finalizedAt}`);
       return;
     }
 
@@ -345,7 +345,7 @@ async function runSteps4Through7(entities: VariantEntities, bankAccountId: strin
   console.log("\n[Step 5] Simulating deposit via Circle mock wire...");
   await step5_simulateDeposit(instructions);
 
-  console.log("\n[Step 6] Creating payment (0.01 USDC)...");
+  console.log("\n[Step 6] Creating payment...");
   const paymentId = await step6_createPayment(
     bankAccountId,
     ledgerAccountId,
