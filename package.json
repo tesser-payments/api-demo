@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
-    "@tesser-payments/types": "^0.0.2"
+    "@tesser-payments/types": "^0.0.2",
+    "p-retry": "^7.1.1",
+    "picocolors": "^1.1.1"
   }
 }

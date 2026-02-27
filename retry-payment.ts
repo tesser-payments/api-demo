@@ -1,4 +1,6 @@
+import pc from "picocolors";
 import { authenticate, get, post } from "./src/client.ts";
+import { pRetry, AbortError, retryOpts } from "./src/retry.ts";
 import type { IPayment } from "@tesser-payments/types";
 
 // ---------------------------------------------------------------------------
@@ -16,41 +18,42 @@ async function readStdin(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Poll payment until first step confirmed
+// Poll payment until first step finalized
 // ---------------------------------------------------------------------------
 async function pollPayment(paymentId: string): Promise<void> {
-  const maxAttempts = 60;
-  const pollIntervalMs = 10_000;
+  await pRetry(
+    async () => {
+      const payment = await get<{ data: IPayment }>(`/v1/payments/${paymentId}`);
+      const steps = payment.data.steps ?? [];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const payment = await get<{ data: IPayment }>(`/v1/payments/${paymentId}`);
-    const steps = payment.data.steps ?? [];
+      const failedStep = steps.find((s) => s.status === "failed");
+      if (failedStep) {
+        throw new AbortError(
+          `Step ${failedStep.stepSequence} failed: ${failedStep.statusReasons}`,
+        );
+      }
 
-    const failedStep = steps.find((s) => s.status === "failed");
-    if (failedStep) {
-      throw new Error(`Step ${failedStep.stepSequence} failed: ${failedStep.statusReasons}`);
-    }
+      const stepStatuses = steps
+        .map((s) => `step${s.stepSequence}=${s.status}`)
+        .join(", ");
+      console.log(pc.yellow(`  Poll: ${stepStatuses}`));
 
-    const stepStatuses = steps.map((s) => `step${s.stepSequence}=${s.status}`).join(", ");
-    console.log(`  Poll ${attempt}/${maxAttempts}: ${stepStatuses}`);
+      if (steps.length >= 1 && steps[0]?.finalizedAt) {
+        console.log(pc.green(`  First step finalized at ${steps[0]!.finalizedAt}`));
+        return;
+      }
 
-    if (steps.length >= 1 && steps[0]?.finalizedAt) {
-      console.log(`  First step finalized at ${steps[0]!.finalizedAt}`);
-      return;
-    }
-
-    if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-    }
-  }
-  throw new Error("Payment did not complete within 10 minutes");
+      throw new Error("Payment not yet finalized");
+    },
+    retryOpts("Poll"),
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
-  console.log("Paste payment request body (JS object literal), then press Ctrl+D:\n");
+  console.log(pc.dim("Paste payment request body (JS object literal), then press Ctrl+D:\n"));
 
   const input = await readStdin();
   if (!input) throw new Error("No input received");
@@ -59,21 +62,21 @@ async function main() {
   const body = new Function(`return (${input})`)();
   console.log("\nParsed payment body:", JSON.stringify(body, null, 2));
 
-  console.log("\n[1] Authenticating...");
+  console.log(pc.bold("\n[1] Authenticating..."));
   await authenticate();
 
-  console.log("[2] Creating payment...");
+  console.log(pc.bold("\n[2] Creating payment..."));
   const payment = await post<{ data: { id: string } }>("/v1/payments", body);
   const paymentId = payment.data.id;
-  console.log(`  Payment ID: ${paymentId}`);
+  console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
-  console.log("[3] Polling payment until complete...");
+  console.log(pc.bold("\n[3] Polling payment until complete..."));
   await pollPayment(paymentId);
 
-  console.log("\nDone!");
+  console.log(pc.bold(pc.green("\nDone!")));
 }
 
 main().catch((err) => {
-  console.error("\nFailed:", err.message);
+  console.error(pc.red(`\nFailed: ${err.message}`));
   process.exit(1);
 });
