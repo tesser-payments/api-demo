@@ -95,15 +95,15 @@ async function step3_setupEntities(tenantId?: string): Promise<{
     "/v1/entities/counterparties",
     {
       classification: "business",
-      businessLegalName: customerName,
-      businessDba: customerName,
-      businessAddressCountry: "US",
-      businessStreetAddress1: faker.location.streetAddress(),
-      businessCity: faker.location.city(),
-      businessState: faker.location.state({ abbreviated: true }),
-      businessPostalCode: faker.location.zipCode(),
-      businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
-      ...(tenantId && { tenantId }),
+      business_legal_name: customerName,
+      business_dba: customerName,
+      business_address_country: "US",
+      business_street_address1: faker.location.streetAddress(),
+      business_city: faker.location.city(),
+      business_state: faker.location.state({ abbreviated: true }),
+      business_postal_code: faker.location.zipCode(),
+      business_legal_entity_identifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+      ...(tenantId && { tenant_id: tenantId }),
     },
   );
   const customerCounterpartyId = customer.data.id;
@@ -119,32 +119,32 @@ async function step3_setupEntities(tenantId?: string): Promise<{
     beneficiaryName = `${firstName} ${lastName}`;
     beneficiaryPayload = {
       classification: "individual",
-      individualFirstName: firstName,
-      individualLastName: lastName,
-      individualAddressCountry: "US",
-      individualStreetAddress1: faker.location.streetAddress(),
-      individualCity: faker.location.city(),
-      individualState: faker.location.state({ abbreviated: true }),
-      individualPostalCode: faker.location.zipCode(),
+      individual_first_name: firstName,
+      individual_last_name: lastName,
+      individual_address_country: "US",
+      individual_street_address1: faker.location.streetAddress(),
+      individual_city: faker.location.city(),
+      individual_state: faker.location.state({ abbreviated: true }),
+      individual_postal_code: faker.location.zipCode(),
     };
   } else {
     beneficiaryName = faker.company.name();
     beneficiaryPayload = {
       classification: "business",
-      businessLegalName: beneficiaryName,
-      businessDba: beneficiaryName,
-      businessAddressCountry: "US",
-      businessStreetAddress1: faker.location.streetAddress(),
-      businessCity: faker.location.city(),
-      businessState: faker.location.state({ abbreviated: true }),
-      businessPostalCode: faker.location.zipCode(),
-      businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+      business_legal_name: beneficiaryName,
+      business_dba: beneficiaryName,
+      business_address_country: "US",
+      business_street_address1: faker.location.streetAddress(),
+      business_city: faker.location.city(),
+      business_state: faker.location.state({ abbreviated: true }),
+      business_postal_code: faker.location.zipCode(),
+      business_legal_entity_identifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
     };
   }
 
   const beneficiary = await post<{ data: { id: string } }>(
     "/v1/entities/counterparties",
-    { ...beneficiaryPayload, ...(tenantId && { tenantId }) },
+    { ...beneficiaryPayload, ...(tenantId && { tenant_id: tenantId }) },
   );
   const beneficiaryCounterpartyId = beneficiary.data.id;
 
@@ -153,7 +153,7 @@ async function step3_setupEntities(tenantId?: string): Promise<{
   const ledger = await post<{ data: { id: string } }>("/v1/accounts/ledgers", {
     name: ledgerName,
     provider: "CIRCLE_MINT",
-    counterpartyId: customerCounterpartyId,
+    counterparty_id: customerCounterpartyId,
   });
   const ledgerAccountId = ledger.data.id;
 
@@ -164,9 +164,9 @@ async function step3_setupEntities(tenantId?: string): Promise<{
     {
       name: walletName,
       type: "stablecoin_stellar",
-      isManaged: false,
-      walletAddress: process.env.BENEFICIARY_WALLET_ADDRESS || "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
-      counterpartyId: beneficiaryCounterpartyId,
+      is_managed: false,
+      wallet_address: process.env.BENEFICIARY_WALLET_ADDRESS || "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
+      counterparty_id: beneficiaryCounterpartyId,
     },
   );
   const walletAccountId = wallet.data.id;
@@ -189,11 +189,11 @@ async function step4_createDeposit(
   const deposit = await pRetry(
     () =>
       post<{ data: { id: string } }>("/v1/treasury/deposits", {
-        fromCurrency: "USD",
-        toCurrency: "USDC",
-        fromAmount: amount,
-        fromAccountId: fromAccountId,
-        toAccountId: toAccountId,
+        from_currency: "USD",
+        to_currency: "USDC",
+        from_amount: amount,
+        from_account_id: fromAccountId,
+        to_account_id: toAccountId,
       }),
     retryOpts("Deposit"),
   );
@@ -256,17 +256,22 @@ async function step6_createPayment(
   toAccountId: string,
   amount: string,
 ): Promise<string> {
+  const resolvedToAccountId = process.env.BENEFICIARY_ACCOUNT_ID || toAccountId;
+  if (process.env.BENEFICIARY_ACCOUNT_ID) {
+    console.log(`  Using BENEFICIARY_ACCOUNT_ID: ${pc.cyan(resolvedToAccountId)}`);
+  }
+
   const payment = await pRetry(
     () =>
       post<{ data: { id: string } }>("/v1/payments", {
         direction: "outbound",
-        fundingAccountId: fundingAccountId,
-        fromAccountId: fromAccountId,
-        toAccountId: toAccountId,
-        fromAmount: amount,
-        fromCurrency: "USDC",
-        toCurrency: "USDC",
-        toNetwork: "STELLAR",
+        funding_account_id: fundingAccountId,
+        from_account_id: fromAccountId,
+        to_account_id: resolvedToAccountId,
+        from_amount: amount,
+        from_currency: "USDC",
+        to_currency: "USDC",
+        to_network: "STELLAR",
       }),
     retryOpts("Payment"),
   );
@@ -345,11 +350,18 @@ async function runSteps4Through7(
   await step5_simulateDeposit(instructions, depositAmount);
 
   console.log(pc.bold(`\n[Step 6] Creating payment (${paymentAmount} USDC)...`));
+  // const paymentId = await step6_createPayment(
+  //   bankAccountId,
+  //   ledgerAccountId,
+  //   walletAccountId,
+  //   paymentAmount,
+  // );
+
   const paymentId = await step6_createPayment(
     bankAccountId,
-    ledgerAccountId,
-    walletAccountId,
-    paymentAmount,
+    "3ee1e340-bbb9-413c-831b-30c2b8d11a53",
+    "9329f4e2-bc2a-4cdf-9220-42ee881b444a",
+    "1.03",
   );
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
@@ -372,7 +384,7 @@ async function main() {
   const bankAccountId = await step2_displayCurrentState();
 
   const depositAmount = (90 + Math.random() * 20).toFixed(2);
-  const paymentAmount = (9 + Math.random() * 2).toFixed(2);
+  const paymentAmount = (1 + Math.random()).toFixed(2);
   console.log(`\n  Deposit amount: ${pc.cyan(`${depositAmount} USD`)}`);
   console.log(`  Payment amount: ${pc.cyan(`${paymentAmount} USDC`)}`);
 
@@ -402,10 +414,10 @@ async function main() {
     const tenant = await post<{ data: { tenant: { id: string } } }>(
       "/v1/entities/tenants",
       {
-        businessLegalName: tenantName,
-        businessDba: tenantName,
-        businessAddressCountry: "US",
-        businessLegalEntityIdentifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
+        business_legal_name: tenantName,
+        business_dba: tenantName,
+        business_address_country: "US",
+        business_legal_entity_identifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
       },
     );
     const tenantId = tenant.data.tenant.id;
