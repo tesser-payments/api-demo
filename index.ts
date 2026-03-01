@@ -1,7 +1,7 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { authenticate, get, post } from "./src/client.ts";
-import { pRetry, AbortError, retryOpts } from "./src/retry.ts";
+import { pRetry, AbortError, retryOpts, RETRY_INTERVAL_MS } from "./src/retry.ts";
 import type {
   IAccount,
   CounterpartyListResponse,
@@ -248,6 +248,42 @@ async function step5_simulateDeposit(instructions: Record<string, unknown>, amou
 }
 
 // ---------------------------------------------------------------------------
+// Step 5b: Poll ledger account balance until funded
+// ---------------------------------------------------------------------------
+async function pollLedgerBalance(ledgerAccountId: string): Promise<void> {
+  await pRetry(
+    async () => {
+      const account = await get<{
+        data: {
+          id: string;
+          assets?: { currency: string; available_balance: string }[];
+        };
+      }>(`/v1/accounts/${ledgerAccountId}`);
+
+      const asset = account.data.assets?.[0];
+      const balance = asset ? parseFloat(asset.available_balance) : 0;
+      console.log(pc.yellow(`  Balance: ${balance} ${asset?.currency ?? "?"}`));
+
+      if (balance > 0) {
+        console.log(pc.green(`  Ledger funded: ${asset!.available_balance} ${asset!.currency}`));
+        return;
+      }
+
+      throw new Error("Ledger balance is 0");
+    },
+    {
+      retries: Infinity,
+      minTimeout: RETRY_INTERVAL_MS,
+      maxTimeout: RETRY_INTERVAL_MS,
+      factor: 1,
+      onFailedAttempt: ({ attemptNumber }) => {
+        console.log(pc.dim(`  Retrying in ${RETRY_INTERVAL_MS / 1000}s... (attempt ${attemptNumber})`));
+      },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Step 6: Create payment (ledger → recipient wallet, 0.01 USDC)
 // ---------------------------------------------------------------------------
 async function step6_createPayment(
@@ -358,20 +394,25 @@ async function runSteps4Through7(
   console.log(pc.bold("\n[Step 5] Simulating deposit via Circle mock wire..."));
   await step5_simulateDeposit(instructions, depositAmount);
 
-  console.log(pc.bold(`\n[Step 6] Creating payment (${paymentAmount} USDC)...`));
-  // const paymentId = await step6_createPayment(
-  //   bankAccountId,
-  //   ledgerAccountId,
-  //   walletAccountId,
-  //   paymentAmount,
-  // );
+  console.log(pc.bold("\n[Step 5b] Polling ledger balance until funded..."));
+  console.log(`  Ledger account:  ${pc.cyan(ledgerAccountId)}`);
+  console.log(`  Wallet account:  ${pc.cyan(walletAccountId)}`);
+  await pollLedgerBalance(ledgerAccountId);
 
+  console.log(pc.bold(`\n[Step 6] Creating payment (${paymentAmount} USDC)...`));
   const paymentId = await step6_createPayment(
     bankAccountId,
-    process.env.TESSER_FROM_ACCOUNT_ID!,
-    process.env.TESSER_TO_ACCOUNT_ID!,
+    ledgerAccountId,
+    walletAccountId,
     paymentAmount,
   );
+
+  // const paymentId = await step6_createPayment(
+  //   bankAccountId,
+  //   process.env.TESSER_FROM_ACCOUNT_ID!,
+  //   process.env.TESSER_TO_ACCOUNT_ID!,
+  //   paymentAmount,
+  // );
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
   console.log(pc.bold("\n[Step 7] Polling payment until complete..."));
