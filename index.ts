@@ -256,10 +256,10 @@ async function step6_createPayment(
   toAccountId: string,
   amount: string,
 ): Promise<string> {
-  const resolvedToAccountId = process.env.BENEFICIARY_ACCOUNT_ID || toAccountId;
-  if (process.env.BENEFICIARY_ACCOUNT_ID) {
-    console.log(`  Using BENEFICIARY_ACCOUNT_ID: ${pc.cyan(resolvedToAccountId)}`);
-  }
+  // const resolvedToAccountId = process.env.BENEFICIARY_ACCOUNT_ID || toAccountId;
+  // if (process.env.BENEFICIARY_ACCOUNT_ID) {
+  //   console.log(`  Using BENEFICIARY_ACCOUNT_ID: ${pc.cyan(resolvedToAccountId)}`);
+  // }
 
   const payment = await pRetry(
     () =>
@@ -267,7 +267,7 @@ async function step6_createPayment(
         direction: "outbound",
         funding_account_id: fundingAccountId,
         from_account_id: fromAccountId,
-        to_account_id: resolvedToAccountId,
+        to_account_id: toAccountId,
         from_amount: amount,
         from_currency: "USDC",
         to_currency: "USDC",
@@ -284,23 +284,32 @@ async function step6_createPayment(
 async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
   await pRetry(
     async () => {
-      const payment = await get<{ data: IPayment }>(`/v1/payments/${paymentId}`);
+      const payment = await get<{
+        data: {
+          steps?: {
+            step_sequence: number;
+            status: string;
+            status_reasons?: string | null;
+            finalized_at?: string | null;
+          }[];
+        };
+      }>(`/v1/payments/${paymentId}`);
       const steps = payment.data.steps ?? [];
 
       const failedStep = steps.find((s) => s.status === "failed");
       if (failedStep) {
         throw new AbortError(
-          `Step ${failedStep.stepSequence} failed: ${failedStep.statusReasons}`,
+          `Step ${failedStep.step_sequence} failed: ${failedStep.status_reasons}`,
         );
       }
 
       const stepStatuses = steps
-        .map((s) => `step${s.stepSequence}=${s.status}`)
+        .map((s) => `step${s.step_sequence}=${s.status}`)
         .join(", ");
       console.log(pc.yellow(`  Poll: ${stepStatuses}`));
 
-      if (steps.length >= 1 && steps[0]?.finalizedAt) {
-        console.log(pc.green(`  First step finalized at ${steps[0]!.finalizedAt}`));
+      if (steps.length >= 1 && steps[0]?.finalized_at) {
+        console.log(pc.green(`  First step finalized at ${steps[0]!.finalized_at}`));
         return;
       }
 
@@ -359,9 +368,9 @@ async function runSteps4Through7(
 
   const paymentId = await step6_createPayment(
     bankAccountId,
-    "3ee1e340-bbb9-413c-831b-30c2b8d11a53",
-    "9329f4e2-bc2a-4cdf-9220-42ee881b444a",
-    "1.03",
+    process.env.TESSER_FROM_ACCOUNT_ID!,
+    process.env.TESSER_TO_ACCOUNT_ID!,
+    paymentAmount,
   );
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
