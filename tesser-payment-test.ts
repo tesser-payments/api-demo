@@ -48,7 +48,7 @@ async function createPayment(): Promise<void> {
     from_currency: "USDC",
     to_currency: "USDC",
     from_account_id: FROM_ACCOUNT_ID,
-    source_account_id: FROM_ACCOUNT_ID,
+    funding_account_id: FROM_ACCOUNT_ID,
     to_account_id: TO_ACCOUNT_ID,
     from_network: "STELLAR",
     to_network: "STELLAR",
