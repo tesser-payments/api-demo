@@ -3,10 +3,8 @@ import { faker } from "@faker-js/faker";
 import { authenticate, get, getAll, post, DEBUG } from "./src/client.ts";
 import { pRetry, AbortError, retryOpts, RETRY_INTERVAL_MS } from "./src/retry.ts";
 import type {
-  IAccount,
   CounterpartyListResponse,
   TenantListResponse,
-  IPayment,
 } from "@tesser-payments/types";
 
 const sep = () => pc.dim("─".repeat(60));
@@ -41,14 +39,20 @@ async function step2_displayCurrentState(): Promise<string> {
     console.log(`    ${pc.dim("·")} ${pc.cyan(c.id)}  ${c.classification}  ${c.name}`);
   }
 
-  const allAccounts = await getAll<IAccount>("/v1/accounts");
+  const allAccounts = await getAll<{
+    id: string; name: string; type: string;
+    counterparty_id?: string | null; tenant_id?: string | null;
+    is_managed?: boolean | null;
+    assets?: { currency: string; available_balance: string }[];
+  }>("/v1/accounts");
   console.log(`  Accounts:       ${pc.bold(String(allAccounts.length))}`);
   for (const a of allAccounts) {
-    const cp = a.counterpartyId ? pc.dim(a.counterpartyId.slice(0, 8)) : pc.dim("none");
+    const cp = a.counterparty_id ? pc.dim(a.counterparty_id.slice(0, 8)) : pc.dim("none");
     const assets = a.assets?.length
-      ? a.assets.map((x) => `${x.availableBalance} ${x.currency}`).join(", ")
+      ? a.assets.map((x) => `${x.available_balance} ${x.currency}`).join(", ")
       : pc.dim("(none)");
-    console.log(`    ${pc.dim("·")} ${a.name}  ${a.type}  cp=${cp}  ${assets}`);
+    const managed = !!a.is_managed ? "managed" : "unmanaged";
+    console.log(`    ${pc.dim("·")} ${pc.cyan(a.id)}  ${a.name}  ${a.type}  ${managed}  cp=${cp}  ${assets}`);
   }
 
   const allTenants = await getAll<TenantListResponse["data"][number]>("/v1/entities/tenants");
@@ -57,15 +61,19 @@ async function step2_displayCurrentState(): Promise<string> {
     console.log(`    ${pc.dim("·")} ${pc.cyan(t.id)}  ${t.name}`);
   }
 
-  const allPayments = await getAll<IPayment>("/v1/payments");
+  const allPayments = await getAll<{
+    id: string; direction: string;
+    from_amount?: string; from_currency?: string;
+    to_amount?: string; to_currency?: string;
+  }>("/v1/payments");
   console.log(`  Payments:       ${pc.bold(String(allPayments.length))}`);
   for (const p of allPayments) {
-    console.log(`    ${pc.dim("·")} ${pc.cyan(p.id)}  ${p.direction}  ${p.fromAmount} ${p.fromCurrency} → ${p.toAmount} ${p.toCurrency}`);
+    console.log(`    ${pc.dim("·")} ${pc.cyan(p.id)}  ${p.direction}  ${p.from_amount} ${p.from_currency} → ${p.to_amount} ${p.to_currency}`);
   }
 
   // Find pre-existing org-level fiat bank account (unmanaged, no tenant, no counterparty)
   const fundingBank = allAccounts.find(
-    (a) => a.type === "fiat_bank" && a.isManaged === false && !a.tenantId && !a.counterpartyId,
+    (a) => a.type === "fiat_bank" && !a.is_managed && !a.tenant_id && !a.counterparty_id,
   );
   if (fundingBank) {
     console.log(`  Funding bank:   ${fundingBank.name} ${pc.dim(`(${fundingBank.id})`)}`);

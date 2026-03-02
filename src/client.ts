@@ -114,11 +114,11 @@ export async function getAll<T>(path: string): Promise<T[]> {
   let page = 1;
   const separator = path.includes("?") ? "&" : "?";
   while (true) {
-    const res = await get<{ data: T[]; pagination?: { hasNext: boolean } }>(
+    const res = await get<{ data: T[]; pagination?: { has_next: boolean } }>(
       `${path}${separator}limit=100&page=${page}`,
     );
     all.push(...res.data);
-    if (!res.pagination?.hasNext) break;
+    if (!res.pagination?.has_next) break;
     page++;
   }
   return all;
