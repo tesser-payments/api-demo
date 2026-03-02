@@ -1,12 +1,11 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
-import { authenticate, get, post } from "./src/client.ts";
+import { authenticate, get, getAll, post, DEBUG } from "./src/client.ts";
 import { pRetry, AbortError, retryOpts, RETRY_INTERVAL_MS } from "./src/retry.ts";
 import type {
   IAccount,
   CounterpartyListResponse,
   TenantListResponse,
-  PaginatedResponse,
   IPayment,
 } from "@tesser-payments/types";
 
@@ -36,32 +35,36 @@ async function step2_displayCurrentState(): Promise<string> {
     console.log(`    ${pc.dim("·")} ${pc.cyan(n.key)} ${pc.dim(`(${n.name})`)}`);
   }
 
-  const counterparties = await get<CounterpartyListResponse>("/v1/entities/counterparties");
-  console.log(`  Counterparties: ${pc.bold(String(counterparties.data.length))}`);
-  for (const c of counterparties.data) {
+  const allCounterparties = await getAll<CounterpartyListResponse["data"][number]>("/v1/entities/counterparties");
+  console.log(`  Counterparties: ${pc.bold(String(allCounterparties.length))}`);
+  for (const c of allCounterparties) {
     console.log(`    ${pc.dim("·")} ${pc.cyan(c.id)}  ${c.classification}  ${c.name}`);
   }
 
-  const accounts = await get<PaginatedResponse<IAccount>>("/v1/accounts");
-  console.log(`  Accounts:       ${pc.bold(String(accounts.data.length))}`);
-  for (const a of accounts.data) {
-    console.log(`    ${pc.dim("·")} ${pc.cyan(a.id)}  type=${a.type}  name=${a.name}`);
+  const allAccounts = await getAll<IAccount>("/v1/accounts");
+  console.log(`  Accounts:       ${pc.bold(String(allAccounts.length))}`);
+  for (const a of allAccounts) {
+    const cp = a.counterpartyId ? pc.dim(a.counterpartyId.slice(0, 8)) : pc.dim("none");
+    const assets = a.assets?.length
+      ? a.assets.map((x) => `${x.availableBalance} ${x.currency}`).join(", ")
+      : pc.dim("(none)");
+    console.log(`    ${pc.dim("·")} ${a.name}  ${a.type}  cp=${cp}  ${assets}`);
   }
 
-  const tenants = await get<TenantListResponse>("/v1/entities/tenants");
-  console.log(`  Tenants:        ${pc.bold(String(tenants.data.length))}`);
-  for (const t of tenants.data) {
+  const allTenants = await getAll<TenantListResponse["data"][number]>("/v1/entities/tenants");
+  console.log(`  Tenants:        ${pc.bold(String(allTenants.length))}`);
+  for (const t of allTenants) {
     console.log(`    ${pc.dim("·")} ${pc.cyan(t.id)}  ${t.name}`);
   }
 
-  const payments = await get<PaginatedResponse<IPayment>>("/v1/payments");
-  console.log(`  Payments:       ${pc.bold(String(payments.data.length))}`);
-  for (const p of payments.data) {
+  const allPayments = await getAll<IPayment>("/v1/payments");
+  console.log(`  Payments:       ${pc.bold(String(allPayments.length))}`);
+  for (const p of allPayments) {
     console.log(`    ${pc.dim("·")} ${pc.cyan(p.id)}  ${p.direction}  ${p.fromAmount} ${p.fromCurrency} → ${p.toAmount} ${p.toCurrency}`);
   }
 
   // Find pre-existing org-level fiat bank account (unmanaged, no tenant, no counterparty)
-  const fundingBank = accounts.data.find(
+  const fundingBank = allAccounts.find(
     (a) => a.type === "fiat_bank" && a.isManaged === false && !a.tenantId && !a.counterpartyId,
   );
   if (fundingBank) {
@@ -165,6 +168,8 @@ async function step3_setupEntities(tenantId?: string): Promise<{
       name: walletName,
       type: "stablecoin_stellar",
       is_managed: false,
+      // You must use a Stellar wallet that has enabled a trustline for USDC
+      // https://developers.stellar.org/docs/data/analytics/hubble/data-catalog/data-dictionary/bronze/trustlines
       wallet_address: process.env.BENEFICIARY_WALLET_ADDRESS || "G" + faker.string.fromCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 55),
       counterparty_id: beneficiaryCounterpartyId,
     },
@@ -426,6 +431,7 @@ async function main() {
   console.log(sep());
   console.log(pc.bold("  Tesser API E2E Demo"));
   console.log(sep());
+  console.log(`  Debug mode: ${DEBUG ? pc.yellow("ON") : pc.dim("OFF")}`);
 
   console.log(pc.bold("\n[Step 1] Authenticating..."));
   await step1_authenticate();

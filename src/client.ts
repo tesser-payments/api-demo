@@ -4,7 +4,7 @@ const AUTH_URL =
   "https://dev-awqy75wdabpsnsvu.us.auth0.com/oauth/token";
 const CLIENT_ID = process.env.TESSER_CLIENT_ID;
 const CLIENT_SECRET = process.env.TESSER_CLIENT_SECRET;
-const DEBUG = !!process.env.DEBUG_MODE && process.env.DEBUG_MODE !== "0";
+export const DEBUG = !!process.env.DEBUG_MODE && process.env.DEBUG_MODE !== "0" && process.env.DEBUG_MODE.toLowerCase() !== "false";
 
 let token: string | null = null;
 
@@ -104,6 +104,24 @@ export async function post<T = unknown>(
   const json = (await res.json()) as T;
   if (DEBUG) console.log("[DEBUG] RESPONSE", JSON.stringify(json, null, 2));
   return json;
+}
+
+/**
+ * Paginated GET — fetches all pages and returns a flat array.
+ */
+export async function getAll<T>(path: string): Promise<T[]> {
+  const all: T[] = [];
+  let page = 1;
+  const separator = path.includes("?") ? "&" : "?";
+  while (true) {
+    const res = await get<{ data: T[]; pagination?: { hasNext: boolean } }>(
+      `${path}${separator}limit=100&page=${page}`,
+    );
+    all.push(...res.data);
+    if (!res.pagination?.hasNext) break;
+    page++;
+  }
+  return all;
 }
 
 /**
