@@ -42,18 +42,25 @@ The demo supports two variants: **org-level** (no tenant) and **tenant-level**, 
 | `TESSER_CLIENT_SECRET` | Yes | Tesser sandbox API client secret |
 | `TESSER_BASE_URL` | No | API base URL (default: `https://sandbox.tesserx.co`) |
 | `TESSER_AUTH_URL` | No | OAuth2 token endpoint URL |
-| `FALLBACK_FUNDING_BANK_ACCOUNT_ID` | No | Bank account ID to use if none is returned by the API |
+| `DEBUG_MODE` | No | Set to `true` to log all request/response payloads |
+| `ENABLE_VARIANTS` | No | `A`, `B`, or `BOTH` (default: `BOTH`) |
 | `CIRCLE_API_KEY` | No | Circle sandbox API key (required for deposit simulation) |
 | `BENEFICIARY_WALLET_ADDRESS` | No | Stellar wallet address for the beneficiary (random if unset) |
-| `DEBUG_MODE` | No | Set to `1` to log all request/response payloads |
-| `ENABLE_VARIANTS` | No | `A`, `B`, or `BOTH` (default: `BOTH`) |
+| `CIRCLE_FROM_WALLET_ID` | No | Circle wallet ID — source for `circle-payment-test.ts` |
+| `CIRCLE_TO_WALLET_ID` | No | Circle recipient ID — destination for `circle-payment-test.ts` |
+| `TESSER_FROM_ACCOUNT_ID` | No | Tesser account ID — source for `tesser-payment-test.ts` and `get-account.ts` |
+| `TESSER_TO_ACCOUNT_ID` | No | Tesser account ID — destination for `tesser-payment-test.ts` |
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `bun run index.ts` | Full 7-step demo flow |
-| `bun run retry-payment.ts` | Retry a failed payment — paste the request body (JS object literal) via stdin |
+| `bun run index.ts` | Full 7-step E2E demo flow |
+| `bun run scripts/get-accounts.ts` | List all accounts with pagination debug output |
+| `bun run scripts/get-account.ts` | Get a single account by `TESSER_FROM_ACCOUNT_ID` |
+| `bun run scripts/tesser-payment-test.ts` | Quick payment test between two known Tesser accounts |
+| `bun run scripts/circle-payment-test.ts` | Direct Circle sandbox payout test |
+| `bun run scripts/retry-payment.ts` | Retry a payment — paste request body (JS object literal) via stdin |
 
 ## How it works
 

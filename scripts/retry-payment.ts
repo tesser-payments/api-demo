@@ -1,6 +1,6 @@
 import pc from "picocolors";
-import { authenticate, get, post } from "./src/client.ts";
-import { pRetry, AbortError, retryOpts } from "./src/retry.ts";
+import { authenticate, get, post } from "../src/client.ts";
+import { pRetry, AbortError, retryOpts } from "../src/retry.ts";
 import type { IPayment } from "@tesser-payments/types";
 
 // ---------------------------------------------------------------------------

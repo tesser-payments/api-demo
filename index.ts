@@ -79,12 +79,18 @@ async function step2_displayCurrentState(): Promise<string> {
     console.log(`  Funding bank:   ${fundingBank.name} ${pc.dim(`(${fundingBank.id})`)}`);
     return fundingBank.id;
   }
-  const fallbackId = process.env.FALLBACK_FUNDING_BANK_ACCOUNT_ID;
-  if (!fallbackId) {
-    throw new Error("No fiat_bank account found and FALLBACK_FUNDING_BANK_ACCOUNT_ID is not set");
-  }
-  console.log(`  Funding bank:   ${pc.yellow("(fallback)")} ${pc.dim(fallbackId)}`);
-  return fallbackId;
+  const newBank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name: "Depositing Bank",
+    bank_name: "Hancock Whitney Bank",
+    bank_code_type: "ROUTING",
+    bank_identifier_code: "065400153",
+    bank_account_number: "000999999991",
+    tenant_id: null,
+    counterparty_id: null,
+    bank_swift_code: "BARCGB22",
+  });
+  console.log(`  Funding bank:   ${pc.yellow("(created)")} Depositing Bank ${pc.dim(`(${newBank.data.id})`)}`);
+  return newBank.data.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,10 +311,6 @@ async function step6_createPayment(
   toAccountId: string,
   amount: string,
 ): Promise<string> {
-  // const resolvedToAccountId = process.env.BENEFICIARY_ACCOUNT_ID || toAccountId;
-  // if (process.env.BENEFICIARY_ACCOUNT_ID) {
-  //   console.log(`  Using BENEFICIARY_ACCOUNT_ID: ${pc.cyan(resolvedToAccountId)}`);
-  // }
 
   const payment = await pRetry(
     () =>
@@ -481,6 +483,10 @@ async function main() {
         business_legal_name: tenantName,
         business_dba: tenantName,
         business_address_country: "US",
+        business_street_address1: faker.location.streetAddress(),
+        business_city: faker.location.city(),
+        business_state: faker.location.state({ abbreviated: true }),
+        business_postal_code: faker.location.zipCode(),
         business_legal_entity_identifier: faker.string.alphanumeric({ length: 20, casing: "upper" }),
       },
     );
