@@ -422,12 +422,6 @@ async function runSteps4Through7(
     paymentAmount,
   );
 
-  // const paymentId = await step6_createPayment(
-  //   bankAccountId,
-  //   process.env.TESSER_FROM_ACCOUNT_ID!,
-  //   process.env.TESSER_TO_ACCOUNT_ID!,
-  //   paymentAmount,
-  // );
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
   console.log(pc.bold("\n[Step 7] Polling payment until complete..."));
