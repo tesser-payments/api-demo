@@ -7,6 +7,16 @@ import { pRetry, AbortError, retryOpts } from "../src/retry.ts";
 const FROM_ACCOUNT_ID = process.env.TESSER_FROM_ACCOUNT_ID;
 if (!FROM_ACCOUNT_ID) throw new Error("TESSER_FROM_ACCOUNT_ID is not set");
 
+function promptYesNo(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) =>
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase().startsWith("y"));
+    }),
+  );
+}
+
 async function main() {
   // 1. Prompt for wallet address
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -92,6 +102,7 @@ async function main() {
     async () => {
       const res = await get<{
         data: {
+          risk_status?: string;
           steps?: {
             step_sequence: number;
             status: string;
@@ -103,6 +114,23 @@ async function main() {
       }>(`/v1/payments/${paymentId}`);
 
       console.log(JSON.stringify(res, null, 2));
+
+      // Handle risk review if awaiting decision
+      if (res.data.risk_status === "awaiting_approval") {
+        const approved = await promptYesNo(
+          pc.yellow("\n  Risk status is awaiting_approval. Approve? (y/n): "),
+        );
+        const review = await post<{ data: Record<string, unknown> }>(
+          `/v1/payments/${paymentId}/review`,
+          { is_approved: approved },
+        );
+        console.log(`  Review submitted (${approved ? "approved" : "rejected"}):`);
+        console.log(JSON.stringify(review, null, 2));
+        if (!approved) {
+          throw new AbortError("Payment rejected by user");
+        }
+        throw new Error("Waiting for post-review processing");
+      }
 
       const steps = res.data.steps ?? [];
 
