@@ -7,13 +7,8 @@ import type { IPayment } from "@tesser-payments/types";
 // Read payment request body from stdin (JS object literal)
 // ---------------------------------------------------------------------------
 async function readStdin(): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  const reader = Bun.stdin.stream().getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf-8").trim();
 }
 

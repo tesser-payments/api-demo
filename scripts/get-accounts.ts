@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { authenticate, get } from "./src/client.ts";
+import { authenticate, get } from "../src/client.ts";
 
 type Account = {
   id: string;

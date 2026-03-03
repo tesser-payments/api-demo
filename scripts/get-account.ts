@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { authenticate, get } from "./src/client.ts";
+import { authenticate, get } from "../src/client.ts";
 import type { IAccount } from "@tesser-payments/types";
 
 const ACCOUNT_ID = process.env.TESSER_FROM_ACCOUNT_ID;
