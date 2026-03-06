@@ -204,7 +204,7 @@ async function step4_createDeposit(
   fromAccountId: string,
   toAccountId: string,
   amount: string,
-): Promise<{ depositId: string; instructions: Record<string, unknown> }> {
+): Promise<string> {
   const deposit = await pRetry(
     () =>
       post<{ data: { id: string } }>("/v1/treasury/deposits", {
@@ -217,53 +217,22 @@ async function step4_createDeposit(
     retryOpts("Deposit"),
   );
 
-  const depositId = deposit.data.id;
-
-  const instructions = await pRetry(
-    () =>
-      get<{ data: Record<string, unknown> }>(
-        `/v1/treasury/deposits/${depositId}/instructions`,
-      ),
-    retryOpts("Instructions"),
-  );
-
-  console.log("  Deposit instructions:", JSON.stringify(instructions.data, null, 2));
-  return { depositId, instructions: instructions.data };
+  return deposit.data.id;
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Simulate deposit via Circle sandbox mock wire
+// Step 5: Simulate deposit via Tesser sandbox endpoint
 // ---------------------------------------------------------------------------
-async function step5_simulateDeposit(instructions: Record<string, unknown>, amount: string): Promise<void> {
-  const circleApiKey = process.env.CIRCLE_API_KEY;
-  if (!circleApiKey) throw new Error("CIRCLE_API_KEY is not set");
-
-  const toAccount = (instructions.to_account ?? instructions.toAccount) as Record<string, unknown>;
-  const trackingRef = toAccount.tracking_reference ?? toAccount.trackingRef ?? (toAccount.metadata as Record<string, unknown>)?.trackingRef;
-  const accountNumber = toAccount.bank_account_number ?? toAccount.accountNumber;
-  const body = {
-    trackingRef,
-    amount: { amount, currency: "USD" },
-    beneficiaryBank: { accountNumber },
-  };
-  console.log("  Mock wire request:", JSON.stringify(body, null, 2));
-
-  const res = await fetch("https://api-sandbox.circle.com/v1/mocks/payments/wire", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${circleApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Circle mock wire failed (${res.status})\n  Response: ${text}`);
-  }
-
-  const json = await res.json();
-  console.log("  Mock wire response:", JSON.stringify(json, null, 2));
+async function step5_simulateDeposit(depositId: string): Promise<void> {
+  const res = await pRetry(
+    () =>
+      post<{ data: Record<string, unknown> }>(
+        `/v1/treasury/deposits/${depositId}/simulate`,
+        {},
+      ),
+    retryOpts("Simulate"),
+  );
+  console.log("  Simulate response:", JSON.stringify(res.data, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -403,11 +372,11 @@ async function runSteps4Through7(
   const { ledgerAccountId, walletAccountId } = entities;
 
   console.log(pc.bold(`\n[Step 4] Creating deposit (${depositAmount} USD → USDC)...`));
-  const { depositId, instructions } = await step4_createDeposit(bankAccountId, ledgerAccountId, depositAmount);
+  const depositId = await step4_createDeposit(bankAccountId, ledgerAccountId, depositAmount);
   console.log(`  Deposit ID: ${pc.cyan(depositId)}`);
 
-  console.log(pc.bold("\n[Step 5] Simulating deposit via Circle mock wire..."));
-  await step5_simulateDeposit(instructions, depositAmount);
+  console.log(pc.bold("\n[Step 5] Simulating deposit..."));
+  await step5_simulateDeposit(depositId);
 
   console.log(pc.bold("\n[Step 5b] Polling ledger balance until funded..."));
   console.log(`  Ledger account:  ${pc.cyan(ledgerAccountId)}`);

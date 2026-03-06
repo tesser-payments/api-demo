@@ -18,7 +18,6 @@ jobs:
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.TESSER_AUTH_URL }}
-          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
