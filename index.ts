@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
-import { authenticate, get, getAll, post, createSecret, DEBUG } from "./src/client.ts";
+import { authenticate, get, getAll, post, DEBUG } from "./src/client.ts";
 import { pRetry, AbortError, retryOpts, RETRY_INTERVAL_MS } from "./src/retry.ts";
 import type {
   CounterpartyListResponse,
@@ -104,7 +104,14 @@ async function step1_5_storeCircleMintKey(): Promise<void> {
     return;
   }
 
-  const result = await createSecret("CIRCLE_MINT", "CIRCLE_MINT_API_KEY", apiKey);
+  const result = await post<{ success: boolean; masked_value: string }>(
+    "/v1/organizations/secrets",
+    {
+      provider: "CIRCLE_MINT",
+      key: "CIRCLE_MINT_API_KEY",
+      value: apiKey,
+    },
+  );
   console.log(`  Success:       ${result.success}`);
   console.log(`  Masked value:  ${result.masked_value}`);
 }

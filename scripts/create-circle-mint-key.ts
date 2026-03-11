@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { authenticate, createSecret } from "../src/client.ts";
+import { authenticate, post } from "../src/client.ts";
 
 const CIRCLE_API_KEY = process.env.CIRCLE_API_KEY;
 
@@ -22,10 +22,13 @@ async function main() {
   console.log(pc.dim("  Provider: CIRCLE_MINT"));
   console.log(pc.dim("  Key:      CIRCLE_MINT_API_KEY"));
 
-  const result = await createSecret(
-    "CIRCLE_MINT",
-    "CIRCLE_MINT_API_KEY",
-    CIRCLE_API_KEY,
+  const result = await post<{ success: boolean; masked_value: string }>(
+    "/v1/organizations/secrets",
+    {
+      provider: "CIRCLE_MINT",
+      key: "CIRCLE_MINT_API_KEY",
+      value: CIRCLE_API_KEY,
+    },
   );
 
   console.log(pc.green("\n✓ Secret stored successfully!"));
