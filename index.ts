@@ -94,6 +94,29 @@ async function step2_displayCurrentState(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Step 1.5: Store Circle Mint API key in organization vault
+// ---------------------------------------------------------------------------
+async function step1_5_storeCircleMintKey(): Promise<void> {
+  const apiKey = process.env.CIRCLE_API_KEY;
+
+  if (!apiKey) {
+    console.log(pc.yellow("  ⚠️  CIRCLE_API_KEY not set — skipping vault storage"));
+    return;
+  }
+
+  const result = await post<{ success: boolean; masked_value: string }>(
+    "/v1/organizations/secrets",
+    {
+      provider: "CIRCLE_MINT",
+      key: "CIRCLE_MINT_API_KEY",
+      value: apiKey,
+    },
+  );
+  console.log(`  Success:       ${result.success}`);
+  console.log(`  Masked value:  ${result.masked_value}`);
+}
+
+// ---------------------------------------------------------------------------
 // Step 3: Create counterparty, ledger account, and recipient wallet
 // ---------------------------------------------------------------------------
 async function step3_setupEntities(tenantId?: string): Promise<{
@@ -408,6 +431,9 @@ async function main() {
 
   console.log(pc.bold("\n[Step 1] Authenticating..."));
   await step1_authenticate();
+
+  console.log(pc.bold("\n[Step 1.5] Storing Circle Mint API key in vault..."));
+  await step1_5_storeCircleMintKey();
 
   console.log(pc.bold("\n[Step 2] Fetching current state..."));
   const bankAccountId = await step2_displayCurrentState();
