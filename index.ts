@@ -313,6 +313,7 @@ async function step6_createPayment(
         to_account_id: toAccountId,
         from_amount: amount,
         from_currency: "USDC",
+        from_network: "STELLAR",
         to_currency: "USDC",
         to_network: "STELLAR",
       }),
