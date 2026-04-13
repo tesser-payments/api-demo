@@ -104,16 +104,25 @@ async function step1_5_storeCircleMintKey(): Promise<void> {
     return;
   }
 
-  const result = await post<{ success: boolean; masked_value: string }>(
-    "/v1/organizations/secrets",
-    {
-      provider: "CIRCLE_MINT",
-      key: "CIRCLE_MINT_API_KEY",
-      value: apiKey,
-    },
-  );
-  console.log(`  Success:       ${result.success}`);
-  console.log(`  Masked value:  ${result.masked_value}`);
+  try {
+    const result = await post<{ success: boolean; masked_value: string }>(
+      "/v1/organizations/secrets",
+      {
+        provider: "CIRCLE_MINT",
+        key: "CIRCLE_MINT_API_KEY",
+        value: apiKey,
+      },
+    );
+    console.log(`  Success:       ${result.success}`);
+    console.log(`  Masked value:  ${result.masked_value}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("secrets-0002")) {
+      console.log(pc.dim("  Already configured — continuing"));
+      return;
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

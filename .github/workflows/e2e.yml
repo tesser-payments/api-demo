@@ -21,6 +21,7 @@ jobs:
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
       - name: Notify Slack on failure
         if: failure()
         uses: slackapi/slack-github-action@v2
