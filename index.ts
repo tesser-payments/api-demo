@@ -373,7 +373,89 @@ async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Run steps 3–7 for a given variant
+// Helper: Get ledger account balance
+// ---------------------------------------------------------------------------
+async function getLedgerBalance(ledgerAccountId: string): Promise<number> {
+  const account = await get<{
+    data: {
+      id: string;
+      assets?: { currency: string; available_balance: string }[];
+    };
+  }>(`/v1/accounts/${ledgerAccountId}`);
+
+  const asset = account.data.assets?.[0];
+  return asset ? parseFloat(asset.available_balance) : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Step 8: Verify balance decreased by amount + fee
+// ---------------------------------------------------------------------------
+async function step8_verifyBalanceDecrease(
+  ledgerAccountId: string,
+  paymentId: string,
+  balanceBefore: number,
+  paymentAmount: string,
+): Promise<void> {
+  // Get payment details to extract fee from steps
+  const payment = await get<{
+    data: {
+      from_amount: string;
+      steps?: {
+        fees?: {
+          fee_type: string;
+          fee_amount: string;
+          fee_currency: string;
+        }[];
+      }[];
+    };
+  }>(`/v1/payments/${paymentId}`);
+
+  const balanceAfter = await getLedgerBalance(ledgerAccountId);
+  const amount = parseFloat(paymentAmount);
+
+  // Sum all fees from all steps
+  let totalFees = 0;
+  if (payment.data.steps) {
+    for (const step of payment.data.steps) {
+      if (step.fees) {
+        for (const fee of step.fees) {
+          totalFees += parseFloat(fee.fee_amount);
+        }
+      }
+    }
+  }
+
+  const total = amount + totalFees;
+
+  console.log(`  Before:   ${balanceBefore}`);
+  console.log(`  After:    ${balanceAfter}`);
+  console.log(`  Amount:   ${amount}`);
+  console.log(`  Fee:      ${totalFees}`);
+  console.log(`  Total:    ${total}`);
+
+  const actualDecrease = balanceBefore - balanceAfter;
+  const expectedDecrease = total;
+
+  // Use 0.02 tolerance to account for floating-point precision issues
+  // This allows for rounding errors while still catching significant discrepancies
+  const tolerance = 0.02;
+  const diff = Math.abs(actualDecrease - expectedDecrease);
+
+  if (diff < tolerance) {
+    console.log(pc.green(`  ✓ Balance decreased by ${actualDecrease.toFixed(6)} (expected ${expectedDecrease.toFixed(2)})`));
+  } else {
+    throw new Error(
+      `Balance verification failed:\n` +
+      `  Expected decrease: ${expectedDecrease}\n` +
+      `  Actual decrease:   ${actualDecrease}\n` +
+      `  Difference:        ${diff}\n` +
+      `  (tolerance: ${tolerance})`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Run steps 3–8 for a given variant
 // ---------------------------------------------------------------------------
 interface VariantEntities {
   customerCounterpartyId: string;
@@ -416,6 +498,9 @@ async function runSteps4Through7(
   console.log(`  Wallet account:  ${pc.cyan(walletAccountId)}`);
   await pollLedgerBalance(ledgerAccountId);
 
+  // Capture balance before payment
+  const balanceBefore = await getLedgerBalance(ledgerAccountId);
+
   console.log(pc.bold(`\n[Step 6] Creating payment (${paymentAmount} USDC)...`));
   const paymentId = await step6_createPayment(
     bankAccountId,
@@ -428,6 +513,9 @@ async function runSteps4Through7(
 
   console.log(pc.bold("\n[Step 7] Polling payment until complete..."));
   await step7_pollPaymentCompletion(paymentId);
+
+  console.log(pc.bold("\n[Step 8] Verifying balance decrease (amount + fee)..."));
+  await step8_verifyBalanceDecrease(ledgerAccountId, paymentId, balanceBefore, paymentAmount);
 }
 
 // ---------------------------------------------------------------------------
@@ -495,17 +583,17 @@ async function main() {
     variantB = await runStep3(tenantId);
   }
 
-  // --- Run steps 4–7 for each variant ---
+  // --- Run steps 4–8 for each variant ---
   if (runA && variantA) {
     console.log(`\n${sep()}`);
-    console.log(pc.bold(pc.magenta("  Variant A: Steps 4–7")));
+    console.log(pc.bold(pc.magenta("  Variant A: Steps 4–8")));
     console.log(sep());
     await runSteps4Through7(variantA, bankAccountId, depositAmount, paymentAmount);
   }
 
   if (runB && variantB) {
     console.log(`\n${sep()}`);
-    console.log(pc.bold(pc.magenta("  Variant B: Steps 4–7")));
+    console.log(pc.bold(pc.magenta("  Variant B: Steps 4–8")));
     console.log(sep());
     await runSteps4Through7(variantB, bankAccountId, depositAmount, paymentAmount);
   }
