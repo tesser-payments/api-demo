@@ -141,7 +141,10 @@ All paths relative to base URL.
 `transfer` · `swap`
 
 ### Step Status
-`created` → `submitted` → `confirmed` → `finalized` → `completed` | `failed`
+`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `finalized` → `completed` | `failed`
+- `signature_requested` / `signed` only fire for self-custodial steps that need a local signature
+- `finalized` = block finality (terminal for crypto-only steps)
+- `completed` = funds delivered (terminal when there's a fiat-conversion leg)
 
 ### Provider Key
 `alfred` · `circle_mint`
@@ -174,8 +177,11 @@ All paths relative to base URL.
    - **Fiat conversion** — stablecoin to fiat off-ramp
 
 ### Step Status Progression
-`created` → `submitted` → `confirmed` → `finalized`/`completed` (or `failed`)
-- `finalized` = block finality (crypto), `completed` = funds delivered (fiat)
+`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `finalized`/`completed` (or `failed`)
+- `signature_requested` / `signed` only fire for self-custodial steps that need a local signature
+- `finalized` = block finality (crypto-only steps stop here; `finalized_at` is set, `completed_at` stays null)
+- `completed` = funds delivered (fires when there's a fiat-conversion leg; `completed_at` is set)
+- When polling, treat either `finalized_at` or `completed_at` being non-null as terminal success
 
 ### Payment Expiration
 All payments have `expires_at`. Expired payments require creating a new payment (risk/compliance checks must be re-initiated).
@@ -214,7 +220,7 @@ function verifyWebhook(rawBody: string, signature: string): boolean {
 | Scope | Events |
 |-------|--------|
 | `payment.*` | `quote_created`, `steps_created`, `balance_updated`, `risk_updated` |
-| `step.*` | `submitted`, `confirmed`, `finalized`, `completed`, `failed` |
+| `step.*` | `signature_requested`, `signed`, `submitted`, `confirmed`, `finalized`, `completed`, `failed` |
 | `deposit.*` | `created`, `submitted`, `confirmed` |
 | `withdrawal.*` | `created`, `submitted`, `confirmed` |
 

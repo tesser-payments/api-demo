@@ -13,7 +13,7 @@ async function readStdin(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Poll payment until first step finalized
+// Poll payment until first step reaches a terminal success state
 // ---------------------------------------------------------------------------
 async function pollPayment(paymentId: string): Promise<void> {
   await pRetry(
@@ -33,8 +33,11 @@ async function pollPayment(paymentId: string): Promise<void> {
         .join(", ");
       console.log(pc.yellow(`  Poll: ${stepStatuses}`));
 
-      if (steps.length >= 1 && steps[0]?.finalizedAt) {
-        console.log(pc.green(`  First step finalized at ${steps[0]!.finalizedAt}`));
+      const first = steps[0];
+      const terminalAt = first?.completedAt ?? first?.finalizedAt;
+      if (steps.length >= 1 && terminalAt) {
+        const label = first?.completedAt ? "completed" : "finalized";
+        console.log(pc.green(`  First step ${label} at ${terminalAt}`));
         return;
       }
 
