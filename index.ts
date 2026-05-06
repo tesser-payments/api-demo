@@ -240,11 +240,18 @@ async function step4_createDeposit(
   const deposit = await pRetry(
     () =>
       post<{ data: { id: string } }>("/v1/treasury/deposits", {
-        from_currency: "USD",
-        to_currency: "USDC",
-        from_amount: amount,
-        from_account_id: fromAccountId,
-        to_account_id: toAccountId,
+        tenant_id: null,
+        desired: {
+          from: {
+            account_id: fromAccountId,
+            amount,
+            currency: "USD",
+          },
+          to: {
+            account_id: toAccountId,
+            currency: "USDC",
+          },
+        },
       }),
     retryOpts("Deposit"),
   );
@@ -344,6 +351,7 @@ async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
             status: string;
             status_reasons?: string | null;
             finalized_at?: string | null;
+            completed_at?: string | null;
           }[];
         };
       }>(`/v1/payments/${paymentId}`);
@@ -361,8 +369,11 @@ async function step7_pollPaymentCompletion(paymentId: string): Promise<void> {
         .join(", ");
       console.log(pc.yellow(`  Poll: ${stepStatuses}`));
 
-      if (steps.length >= 1 && steps[0]?.finalized_at) {
-        console.log(pc.green(`  First step finalized at ${steps[0]!.finalized_at}`));
+      const first = steps[0];
+      const terminalAt = first?.completed_at ?? first?.finalized_at;
+      if (steps.length >= 1 && terminalAt) {
+        const label = first?.completed_at ? "completed" : "finalized";
+        console.log(pc.green(`  First step ${label} at ${terminalAt}`));
         return;
       }
 

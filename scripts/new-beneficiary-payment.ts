@@ -96,7 +96,7 @@ async function main() {
   console.log(`  Balance status: ${payment.data.balance_status}`);
   console.log(`  Expires at:     ${pc.dim(payment.data.expires_at)}`);
 
-  // 5. Poll payment until finalized
+  // 5. Poll payment until finalized/completed
   console.log(pc.bold("\n[5] Polling payment until finalized..."));
   await pRetry(
     async () => {
@@ -108,6 +108,7 @@ async function main() {
             status: string;
             status_reasons?: string | null;
             finalized_at?: string | null;
+            completed_at?: string | null;
           }[];
           [key: string]: unknown;
         };
@@ -141,8 +142,11 @@ async function main() {
         );
       }
 
-      if (steps.length >= 1 && steps[0]?.finalized_at) {
-        console.log(pc.green(`  Finalized at ${steps[0].finalized_at}`));
+      const first = steps[0];
+      const terminalAt = first?.completed_at ?? first?.finalized_at;
+      if (steps.length >= 1 && terminalAt) {
+        const label = first?.completed_at ? "Completed" : "Finalized";
+        console.log(pc.green(`  ${label} at ${terminalAt}`));
         return;
       }
 

@@ -1,7 +1,6 @@
 import pc from "picocolors";
 import { authenticate, get, post } from "../src/client.ts";
 import { pRetry, AbortError, retryOpts } from "../src/retry.ts";
-import type { IPayment } from "@tesser-payments/types";
 
 // ---------------------------------------------------------------------------
 // Read payment request body from stdin (JS object literal)
@@ -13,28 +12,49 @@ async function readStdin(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Poll payment until first step finalized
+// Poll payment until every step reaches a terminal success state
 // ---------------------------------------------------------------------------
 async function pollPayment(paymentId: string): Promise<void> {
   await pRetry(
     async () => {
-      const payment = await get<{ data: IPayment }>(`/v1/payments/${paymentId}`);
+      const payment = await get<{
+        data: {
+          steps?: {
+            step_sequence: number;
+            status: string;
+            status_reasons?: string | null;
+            finalized_at?: string | null;
+            completed_at?: string | null;
+          }[];
+        };
+      }>(`/v1/payments/${paymentId}`);
       const steps = payment.data.steps ?? [];
 
       const failedStep = steps.find((s) => s.status === "failed");
       if (failedStep) {
         throw new AbortError(
-          `Step ${failedStep.stepSequence} failed: ${failedStep.statusReasons}`,
+          `Step ${failedStep.step_sequence} failed: ${failedStep.status_reasons}`,
         );
       }
 
       const stepStatuses = steps
-        .map((s) => `step${s.stepSequence}=${s.status}`)
+        .map((s) => `step${s.step_sequence}=${s.status}`)
         .join(", ");
       console.log(pc.yellow(`  Poll: ${stepStatuses}`));
 
-      if (steps.length >= 1 && steps[0]?.finalizedAt) {
-        console.log(pc.green(`  First step finalized at ${steps[0]!.finalizedAt}`));
+      const allTerminal =
+        steps.length >= 1 && steps.every((s) => s.completed_at ?? s.finalized_at);
+      if (allTerminal) {
+        const latest = steps.reduce((a, b) => {
+          const aAt = (a.completed_at ?? a.finalized_at) as string;
+          const bAt = (b.completed_at ?? b.finalized_at) as string;
+          return bAt > aAt ? b : a;
+        });
+        const terminalAt = (latest.completed_at ?? latest.finalized_at) as string;
+        const label = latest.completed_at ? "completed" : "finalized";
+        console.log(
+          pc.green(`  All ${steps.length} step(s) terminal — latest ${label} at ${terminalAt}`),
+        );
         return;
       }
 
