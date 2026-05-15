@@ -278,8 +278,13 @@ async function step5_simulateDeposit(depositId: string): Promise<void> {
 // Step 5b: Poll ledger account balance until funded
 // ---------------------------------------------------------------------------
 async function pollLedgerBalance(ledgerAccountId: string): Promise<void> {
+  // Log every attempt for the first 10, then every 100th, to avoid log spam
+  // when something upstream wedges the ledger funding flow.
+  const shouldLog = (n: number) => n <= 10 || n % 100 === 0;
+  let attempt = 0;
   await pRetry(
     async () => {
+      attempt++;
       const account = await get<{
         data: {
           id: string;
@@ -289,7 +294,9 @@ async function pollLedgerBalance(ledgerAccountId: string): Promise<void> {
 
       const asset = account.data.assets?.[0];
       const balance = asset ? parseFloat(asset.available_balance) : 0;
-      console.log(pc.yellow(`  Balance: ${balance} ${asset?.currency ?? "?"}`));
+      if (shouldLog(attempt)) {
+        console.log(pc.yellow(`  Balance: ${balance} ${asset?.currency ?? "?"}`));
+      }
 
       if (balance > 0) {
         console.log(pc.green(`  Ledger funded: ${asset!.available_balance} ${asset!.currency}`));
@@ -304,7 +311,9 @@ async function pollLedgerBalance(ledgerAccountId: string): Promise<void> {
       maxTimeout: RETRY_INTERVAL_MS,
       factor: 1,
       onFailedAttempt: ({ attemptNumber }) => {
-        console.log(pc.dim(`  Retrying in ${RETRY_INTERVAL_MS / 1000}s... (attempt ${attemptNumber})`));
+        if (shouldLog(attemptNumber)) {
+          console.log(pc.dim(`  Retrying in ${RETRY_INTERVAL_MS / 1000}s... (attempt ${attemptNumber})`));
+        }
       },
     },
   );
