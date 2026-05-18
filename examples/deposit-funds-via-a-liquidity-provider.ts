@@ -25,7 +25,7 @@ export interface DepositLpResult {
   deposit: DepositResponse;
 }
 
-interface DepositResponse {
+export interface DepositResponse {
   id: string;
   desired?: {
     from?: { currency?: string; amount?: string };
@@ -46,7 +46,167 @@ interface DepositResponse {
 }
 
 export async function run(input: DepositLpInput): Promise<DepositLpResult> {
-  throw new Error("not implemented");
+  const fromCurrency = input.fromCurrency ?? "USD";
+  const toCurrency = input.toCurrency ?? "USDC";
+
+  // 1. Store Circle Mint API key in vault (idempotent).
+  await ensureCircleMintKey();
+
+  // 2. Find-or-create an org-level unmanaged bank account as funding source.
+  const fundingBankId = await findOrCreateFundingBank();
+  console.log(`  Funding bank: ${pc.cyan(fundingBankId)}`);
+
+  // 3. Create a fresh business counterparty for this run.
+  const customerName = faker.company.name();
+  const customer = await post<{ data: { id: string } }>(
+    "/v1/entities/counterparties",
+    {
+      classification: "business",
+      business_legal_name: customerName,
+      business_dba: customerName,
+      business_address_country: "US",
+      business_street_address1: faker.location.streetAddress(),
+      business_city: faker.location.city(),
+      business_state: faker.location.state({ abbreviated: true }),
+      business_postal_code: faker.location.zipCode(),
+      business_legal_entity_identifier: faker.string.alphanumeric({
+        length: 20,
+        casing: "upper",
+      }),
+    },
+  );
+  console.log(
+    `  Counterparty: ${customerName} ${pc.dim(`(${customer.data.id})`)}`,
+  );
+
+  // 4. Create a Circle Mint ledger account tied to that counterparty.
+  const ledger = await post<{ data: { id: string } }>(
+    "/v1/accounts/ledgers",
+    {
+      name: `${customerName}'s Ledger`,
+      provider: "CIRCLE_MINT",
+      counterparty_id: customer.data.id,
+    },
+  );
+  const ledgerAccountId = ledger.data.id;
+  console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)}`);
+
+  // 5. Create the deposit.
+  const created = await post<{ data: DepositResponse }>(
+    "/v1/treasury/deposits",
+    {
+      tenant_id: null,
+      desired: {
+        from: {
+          account_id: fundingBankId,
+          amount: input.depositAmount,
+          currency: fromCurrency,
+        },
+        to: {
+          account_id: ledgerAccountId,
+          currency: toCurrency,
+        },
+      },
+    },
+  );
+  const depositId = created.data.id;
+  console.log(`  Deposit ID: ${pc.cyan(depositId)}`);
+
+  // 6. Sandbox-only: simulate the deposit so funds arrive.
+  await post(`/v1/treasury/deposits/${depositId}/simulate`, {});
+  console.log(pc.dim("  Simulated"));
+
+  // 7. Poll the deposit resource until DEA `actual.to.amount` populates.
+  const terminal = await pollDepositTerminal(depositId);
+
+  return { depositId, ledgerAccountId, deposit: terminal };
+}
+
+async function ensureCircleMintKey(): Promise<void> {
+  const apiKey = process.env.CIRCLE_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "CIRCLE_API_KEY is required for the deposit-via-LP example. " +
+        "Set it in .env and re-run.",
+    );
+  }
+  try {
+    await post("/v1/organizations/secrets", {
+      provider: "CIRCLE_MINT",
+      key: "CIRCLE_MINT_API_KEY",
+      value: apiKey,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // secrets-0002 means "already configured" — idempotent.
+    if (!msg.includes("secrets-0002")) throw err;
+  }
+}
+
+async function findOrCreateFundingBank(): Promise<string> {
+  const accounts = await getAll<{
+    id: string;
+    type: string;
+    is_managed?: boolean | null;
+    tenant_id?: string | null;
+    counterparty_id?: string | null;
+  }>("/v1/accounts");
+
+  const existing = accounts.find(
+    (a) =>
+      a.type === "fiat_bank" &&
+      !a.is_managed &&
+      !a.tenant_id &&
+      !a.counterparty_id,
+  );
+  if (existing) return existing.id;
+
+  const created = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name: "Depositing Bank",
+    bank_name: "Hancock Whitney Bank",
+    bank_code_type: "ROUTING",
+    bank_identifier_code: "065400153",
+    bank_account_number: "000999999991",
+    tenant_id: null,
+    counterparty_id: null,
+    bank_swift_code: "BARCGB22",
+  });
+  return created.data.id;
+}
+
+async function pollDepositTerminal(depositId: string): Promise<DepositResponse> {
+  const intervalMs = 5_000;
+  const deadline = Date.now() + 5 * 60 * 1000; // 5 minutes
+  let lastLog = "";
+  while (true) {
+    const res = await get<{ data: DepositResponse }>(
+      `/v1/treasury/deposits/${depositId}`,
+    );
+    const d = res.data;
+    const failed = d.steps?.find((s) => s.status === "failed");
+    if (failed) {
+      throw new Error(
+        `Deposit step ${failed.step_sequence} failed: ${failed.status_reasons}`,
+      );
+    }
+    const log = (d.steps ?? [])
+      .map((s) => `step${s.step_sequence}=${s.status}`)
+      .join(", ");
+    if (log !== lastLog) {
+      console.log(pc.yellow(`  Poll: ${log}`));
+      lastLog = log;
+    }
+    if (d.actual?.to?.amount) {
+      console.log(
+        pc.green(`  Deposit terminal: actual.to=${d.actual.to.amount}`),
+      );
+      return d;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Deposit ${depositId} did not terminate within 5 min`);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 if (import.meta.main) {
