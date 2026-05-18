@@ -4,10 +4,13 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "demo": "bun run index.ts"
+    "demo": "bun run index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
     "typescript": "^5"
