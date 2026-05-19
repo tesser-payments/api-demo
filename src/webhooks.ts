@@ -14,6 +14,8 @@ export interface WebhookEvent<TObject = unknown> {
 
 export interface SubscribeOptions {
   token: string;
+  /** webhook.site API key — required when the token is owned by a paid account. */
+  apiKey?: string;
   apiBaseUrl?: string;
   verifySignatures?: boolean;
   pollIntervalMs?: number;
@@ -177,9 +179,11 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
   async function pollOnce() {
     if (!windowStart) return;
     const url = `${apiBaseUrl}/token/${encodeURIComponent(opts.token)}/requests?date_from=${encodeURIComponent(windowStart)}&sorting=oldest&per_page=100`;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (opts.apiKey) headers["Api-Key"] = opts.apiKey;
     let res: Response;
     try {
-      res = await fetch(url);
+      res = await fetch(url, { headers });
     } catch {
       return;
     }

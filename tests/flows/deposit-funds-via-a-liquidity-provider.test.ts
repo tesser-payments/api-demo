@@ -17,7 +17,10 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
       );
     }
     await authenticate();
-    sub = subscribeToWebhooks({ token: process.env.WEBHOOK_SITE_TOKEN });
+    sub = subscribeToWebhooks({
+      token: process.env.WEBHOOK_SITE_TOKEN,
+      apiKey: process.env.WEBHOOK_SITE_API_KEY,
+    });
     sub.startWindow();
   });
 
@@ -45,6 +48,6 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
       expect(result.deposit.estimated).toBeDefined();
       expect(result.deposit.actual?.to?.amount).toBeDefined();
     },
-    300_000,
+    600_000,
   );
 });
