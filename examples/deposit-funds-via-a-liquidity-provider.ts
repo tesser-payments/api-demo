@@ -1,6 +1,7 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { authenticate, get, getAll, post } from "../src/client.ts";
+import { pRetry, retryOpts } from "../src/retry.ts";
 
 export const meta = {
   name: "Deposit funds via a liquidity provider (Circle Mint)",
@@ -116,7 +117,12 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   console.log(`  Deposit ID: ${pc.cyan(depositId)}`);
 
   // 6. Sandbox-only: simulate the deposit so funds arrive.
-  await post(`/v1/treasury/deposits/${depositId}/simulate`, {});
+  //    The deposit's internal step/account wiring is provisioned
+  //    asynchronously after creation; retry until the platform is ready.
+  await pRetry(
+    () => post(`/v1/treasury/deposits/${depositId}/simulate`, {}),
+    retryOpts("Simulate"),
+  );
   console.log(pc.dim("  Simulated"));
 
   // 7. Poll the deposit resource until DEA `actual.to.amount` populates.
