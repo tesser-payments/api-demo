@@ -229,8 +229,10 @@ async function simulateDepositWhenReady(depositId: string): Promise<void> {
 }
 
 async function pollDepositTerminal(depositId: string): Promise<DepositResponse> {
-  const intervalMs = 5_000;
-  const deadline = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const intervalMs = 10_000;
+  // Sandbox-simulated deposits can take up to 20 min to advance steps to
+  // `completed`. Budget 25 min so we don't false-alarm on healthy runs.
+  const deadline = Date.now() + 25 * 60 * 1000;
   let lastLog = "";
   while (true) {
     const res = await get<{ data: DepositResponse }>(
@@ -257,7 +259,7 @@ async function pollDepositTerminal(depositId: string): Promise<DepositResponse> 
       return d;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Deposit ${depositId} did not terminate within 5 min`);
+      throw new Error(`Deposit ${depositId} did not terminate within 25 min`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
