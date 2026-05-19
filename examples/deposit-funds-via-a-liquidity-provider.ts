@@ -1,7 +1,6 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { authenticate, get, getAll, post } from "../src/client.ts";
-import { pRetry, retryOpts } from "../src/retry.ts";
 
 export const meta = {
   name: "Deposit funds via a liquidity provider (Circle Mint)",
@@ -117,12 +116,7 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   console.log(`  Deposit ID: ${pc.cyan(depositId)}`);
 
   // 6. Sandbox-only: simulate the deposit so funds arrive.
-  //    The deposit's internal step/account wiring is provisioned
-  //    asynchronously after creation; retry until the platform is ready.
-  await pRetry(
-    () => post(`/v1/treasury/deposits/${depositId}/simulate`, {}),
-    retryOpts("Simulate"),
-  );
+  await simulateDepositWhenReady(depositId);
   console.log(pc.dim("  Simulated"));
 
   // 7. Poll the deposit resource until DEA `actual.to.amount` populates.
@@ -183,22 +177,19 @@ async function findOrCreateFundingBank(): Promise<string> {
   return created.data.id;
 }
 
-interface LedgerAccount {
-  id: string;
-  metadata?: {
-    circle_mint?: {
-      circle_compliance_state?: string;
-    };
-  };
-}
-
 async function waitForLedgerProvisioned(ledgerAccountId: string): Promise<void> {
+  // Circle ledger compliance is observable on the resource itself via
+  // `metadata.circle_mint.circle_compliance_state`, so we poll the
+  // resource directly rather than retrying an operation.
   const intervalMs = 5_000;
-  const deadline = Date.now() + 2 * 60 * 1000; // 2 minutes
+  const deadline = Date.now() + 2 * 60 * 1000;
   while (true) {
-    const res = await get<{ data: LedgerAccount }>(
-      `/v1/accounts/${ledgerAccountId}`,
-    );
+    const res = await get<{
+      data: {
+        id: string;
+        metadata?: { circle_mint?: { circle_compliance_state?: string } };
+      };
+    }>(`/v1/accounts/${ledgerAccountId}`);
     const state = res.data.metadata?.circle_mint?.circle_compliance_state;
     if (state === "ACCEPTED") return;
     if (Date.now() >= deadline) {
@@ -207,8 +198,33 @@ async function waitForLedgerProvisioned(ledgerAccountId: string): Promise<void> 
           `(circle_compliance_state=${state ?? "unset"})`,
       );
     }
-    console.log(pc.dim(`  Waiting for Circle provisioning (state=${state ?? "unset"})…`));
+    console.log(pc.dim(`  Waiting for Circle provisioning (state=${state ?? "unset"})...`));
     await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+async function simulateDepositWhenReady(depositId: string): Promise<void> {
+  // Deposit step/account wiring is provisioned asynchronously after the
+  // deposit is created. There's no observable readiness flag — the only
+  // signal is the simulate call itself, so we retry the operation.
+  const intervalMs = 5_000;
+  const deadline = Date.now() + 60_000;
+  while (true) {
+    try {
+      await post(`/v1/treasury/deposits/${depositId}/simulate`, {});
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only retry the wiring race. Anything else is a real failure.
+      if (!msg.includes("treasury-3111")) throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Deposit ${depositId} simulate could not run within 60s: ${msg}`,
+        );
+      }
+      console.log(pc.dim("  Waiting for deposit step wiring..."));
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
   }
 }
 
