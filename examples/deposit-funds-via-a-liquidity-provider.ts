@@ -91,6 +91,9 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   const ledgerAccountId = ledger.data.id;
   console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)}`);
 
+  // 4.5. Wait for Circle to finish provisioning the ledger before depositing.
+  await waitForLedgerProvisioned(ledgerAccountId);
+
   // 5. Create the deposit.
   const created = await post<{ data: DepositResponse }>(
     "/v1/treasury/deposits",
@@ -172,6 +175,35 @@ async function findOrCreateFundingBank(): Promise<string> {
     bank_swift_code: "BARCGB22",
   });
   return created.data.id;
+}
+
+interface LedgerAccount {
+  id: string;
+  metadata?: {
+    circle_mint?: {
+      circle_compliance_state?: string;
+    };
+  };
+}
+
+async function waitForLedgerProvisioned(ledgerAccountId: string): Promise<void> {
+  const intervalMs = 5_000;
+  const deadline = Date.now() + 2 * 60 * 1000; // 2 minutes
+  while (true) {
+    const res = await get<{ data: LedgerAccount }>(
+      `/v1/accounts/${ledgerAccountId}`,
+    );
+    const state = res.data.metadata?.circle_mint?.circle_compliance_state;
+    if (state === "ACCEPTED") return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Ledger ${ledgerAccountId} not provisioned within 2 min ` +
+          `(circle_compliance_state=${state ?? "unset"})`,
+      );
+    }
+    console.log(pc.dim(`  Waiting for Circle provisioning (state=${state ?? "unset"})…`));
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 async function pollDepositTerminal(depositId: string): Promise<DepositResponse> {
