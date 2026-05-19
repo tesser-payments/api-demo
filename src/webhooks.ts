@@ -176,6 +176,7 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
   const seen = new Set<string>();
   const events: WebhookEvent[] = [];
 
+  let warnedNonOk = false;
   async function pollOnce() {
     if (!windowStart) return;
     const url = `${apiBaseUrl}/token/${encodeURIComponent(opts.token)}/requests?date_from=${encodeURIComponent(windowStart)}&sorting=oldest&per_page=100`;
@@ -184,10 +185,24 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
     let res: Response;
     try {
       res = await fetch(url, { headers });
-    } catch {
+    } catch (err) {
+      if (!warnedNonOk) {
+        console.warn(`[webhooks] fetch error from webhook.site: ${err}`);
+        warnedNonOk = true;
+      }
       return;
     }
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (!warnedNonOk) {
+        const body = await res.text().catch(() => "<unreadable>");
+        console.warn(
+          `[webhooks] webhook.site returned ${res.status} for poll request. ` +
+            `Body: ${body.slice(0, 200)}`,
+        );
+        warnedNonOk = true;
+      }
+      return;
+    }
     let body: WebhookSiteResponse;
     try {
       body = (await res.json()) as WebhookSiteResponse;
@@ -226,7 +241,12 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
   }
 
   function startWindow() {
-    windowStart = new Date().toISOString();
+    // webhook.site's REST API rejects ISO 8601 with the `T` separator and
+    // fractional seconds. Use its expected `YYYY-MM-DD HH:MM:SS` format (UTC).
+    windowStart = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d+Z$/, "");
     if (timer === null && !stopped) {
       // Run a poll immediately, then schedule subsequent polls.
       timer = setTimeout(async () => {

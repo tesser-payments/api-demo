@@ -69,7 +69,12 @@ function installFetchMock(state: MockState) {
     const dateFrom = u.searchParams.get("date_from");
     let data = state.requests;
     if (dateFrom) {
-      const t = new Date(dateFrom).getTime();
+      // webhook.site treats date_from as UTC; JS parses space-separated
+      // formats as local time. Normalize to UTC ISO before parsing.
+      const utc = dateFrom.includes("T")
+        ? dateFrom
+        : dateFrom.replace(" ", "T") + "Z";
+      const t = new Date(utc).getTime();
       data = data.filter((r) => new Date(r.created_at).getTime() >= t);
     }
     return new Response(JSON.stringify({ data }), {
@@ -227,6 +232,26 @@ describe("subscribeToWebhooks", () => {
       expect(c.url).toContain("date_from=");
       expect(c.url).toContain("/token/tok/requests");
     }
+  });
+
+  test("date_from uses webhook.site's accepted format (YYYY-MM-DD HH:MM:SS, no T separator)", async () => {
+    sub = subscribeToWebhooks({ token: "tok", pollIntervalMs: 5 });
+    sub.startWindow();
+
+    let err: unknown;
+    try {
+      await sub.scopedTo("pay_none").waitFor(undefined, { timeoutMs: 30 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WebhookTimeout);
+
+    expect(state.calls.length).toBeGreaterThan(0);
+    const u = new URL(state.calls[0]!.url);
+    const dateFrom = u.searchParams.get("date_from");
+    expect(dateFrom).toBeTruthy();
+    // Format: 2026-05-19 03:08:25 (no T, no fractional, no Z).
+    expect(dateFrom).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 
   test("events without a signature header are marked signatureValid=false", async () => {
