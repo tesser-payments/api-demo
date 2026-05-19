@@ -38,7 +38,7 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
       expect(events.map((e) => e.type)).toEqual([
         ...EXPECTED_DEPOSIT_LP.types,
       ]);
-      expect(events.every((e) => e.signatureValid)).toBe(true);
+      expect(events.filter((e) => !e.signatureValid)).toEqual([]);
       expect(result.deposit.desired).toMatchObject(
         EXPECTED_DEPOSIT_LP.terminal.desired,
       );

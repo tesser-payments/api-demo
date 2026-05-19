@@ -327,6 +327,67 @@ describe("subscribeToWebhooks", () => {
     ]);
   });
 
+  test("collectAll waits until each type's count meets the expected multiplicity", async () => {
+    sub = subscribeToWebhooks({ token: "tok", pollIntervalMs: 5 });
+    sub.startWindow();
+
+    state.requests.push(
+      makeRequest({
+        body: makeEnvelope({ type: "step.completed", object: { id: "stp_1", deposit_id: "dep_1" } }),
+        receivedAt: futureIso(100),
+      }),
+    );
+
+    // Kick the poll loop once.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // collectAll should NOT have returned yet — only 1 of 2 step.completed events has arrived.
+    // Push the second after a delay.
+    setTimeout(() => {
+      state.requests.push(
+        makeRequest({
+          body: makeEnvelope({ type: "step.completed", object: { id: "stp_2", deposit_id: "dep_1" } }),
+          receivedAt: futureIso(200),
+        }),
+      );
+    }, 30);
+
+    const events = await sub.scopedTo("dep_1").collectAll({
+      expectedTypes: ["step.completed", "step.completed"],
+      timeoutMs: 1000,
+    });
+
+    expect(events.map((e) => e.type)).toEqual(["step.completed", "step.completed"]);
+  });
+
+  test("collectAll WebhookTimeout missing field reports under-counted types", async () => {
+    sub = subscribeToWebhooks({ token: "tok", pollIntervalMs: 5 });
+    sub.startWindow();
+
+    state.requests.push(
+      makeRequest({
+        body: makeEnvelope({ type: "step.completed", object: { id: "stp_1", deposit_id: "dep_1" } }),
+        receivedAt: futureIso(100),
+      }),
+    );
+
+    let err: unknown;
+    try {
+      await sub.scopedTo("dep_1").collectAll({
+        expectedTypes: ["step.completed", "step.completed", "deposit.updated"],
+        timeoutMs: 50,
+      });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeInstanceOf(WebhookTimeout);
+    // Missing should include the second step.completed (count fell short) AND deposit.updated (never seen).
+    const t = err as WebhookTimeout;
+    expect(t.missing).toContain("step.completed");
+    expect(t.missing).toContain("deposit.updated");
+  });
+
   test("stop halts the poll loop", async () => {
     sub = subscribeToWebhooks({ token: "tok", pollIntervalMs: 5 });
     sub.startWindow();

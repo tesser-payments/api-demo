@@ -280,25 +280,39 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
     }): Promise<WebhookEvent[]> {
       const timeoutMs = args.timeoutMs ?? DEFAULT_COLLECT_TIMEOUT_MS;
       const deadline = Date.now() + timeoutMs;
-      const expected = new Set(args.expectedTypes);
+      // Build expected-count map: { type -> count }.
+      const expectedCounts = new Map<string, number>();
+      for (const t of args.expectedTypes) {
+        expectedCounts.set(t, (expectedCounts.get(t) ?? 0) + 1);
+      }
       while (true) {
         const matched = scopedEvents();
-        const seenTypes = new Set(matched.map((e) => e.type));
-        let allSeen = true;
-        for (const t of expected) {
-          if (!seenTypes.has(t)) {
-            allSeen = false;
+        // Tally observed counts per type.
+        const observedCounts = new Map<string, number>();
+        for (const e of matched) {
+          observedCounts.set(e.type, (observedCounts.get(e.type) ?? 0) + 1);
+        }
+        // Check whether every expected type's count is satisfied.
+        let satisfied = true;
+        for (const [type, required] of expectedCounts) {
+          if ((observedCounts.get(type) ?? 0) < required) {
+            satisfied = false;
             break;
           }
         }
-        if (allSeen) {
+        if (satisfied) {
           return [...matched].sort((a, b) =>
             a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : 0,
           );
         }
         if (Date.now() >= deadline) {
-          const observed = Array.from(seenTypes);
-          const missing = [...args.expectedTypes].filter((t) => !seenTypes.has(t));
+          const observed = Array.from(observedCounts.keys());
+          // `missing` lists each under-counted type once per missing occurrence.
+          const missing: string[] = [];
+          for (const [type, required] of expectedCounts) {
+            const have = observedCounts.get(type) ?? 0;
+            for (let i = have; i < required; i++) missing.push(type);
+          }
           throw new WebhookTimeout({
             message: `Waited ${timeoutMs}ms for [${[...args.expectedTypes].join(", ")}] on [${(ids ?? []).join(", ")}]; got ${matched.length} of ${args.expectedTypes.length}; missing [${missing.join(", ")}].`,
             missing,
