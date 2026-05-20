@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../../src/client.ts";
 import {
   subscribeToWebhooks,
@@ -20,6 +21,7 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
     sub = subscribeToWebhooks({
       token: process.env.WEBHOOK_SITE_TOKEN,
       apiKey: process.env.WEBHOOK_SITE_API_KEY,
+      publicKey: WEBHOOK_SANDBOX_PUBLIC_KEY,
     });
     sub.startWindow();
   });
@@ -49,8 +51,8 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
       expect(result.deposit.estimated).toBeDefined();
       expect(result.deposit.actual?.to?.amount).toBeDefined();
     },
-    // 35 min: example.run() can take up to 25 min (sandbox sim duration) +
-    // collectAll up to 10 min for webhook delivery lag.
-    35 * 60 * 1000,
+    // 60 min: example.run() can take up to 25 min (sandbox sim duration) +
+    // collectAll up to 10 min for webhook delivery lag + buffer for slow runs.
+    60 * 60 * 1000,
   );
 });

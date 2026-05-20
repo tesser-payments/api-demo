@@ -7,7 +7,7 @@
       "dependencies": {
         "@faker-js/faker": "^10.3.0",
         "@modelcontextprotocol/sdk": "^1.27.1",
-        "@tesser-payments/types": "^0.0.2",
+        "@tesser-payments/types": "0.0.4",
         "p-retry": "^7.1.1",
         "picocolors": "^1.1.1",
       },
@@ -87,7 +87,7 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@tesser-payments/types": ["@tesser-payments/types@0.0.2", "", { "dependencies": { "viem": "^2.45.1", "zod": "^4.3.6" } }, "sha512-HqBAp/78Hn0G24TmELirEuh9PEDccEUWNLR1F4M1xl7fubDMoUGNIaERz6k8zU6PANOSRXu1FX8Hf5W240p3ig=="],
+    "@tesser-payments/types": ["@tesser-payments/types@0.0.4", "", { "dependencies": { "viem": "^2.45.1", "zod": "^4.3.6" } }, "sha512-1Ikzue99oCqgDO/mT0qAVgCAo2hh97by7BhCwQQWdEmFCEER4AzVmcLE5Ov5AFQOwpE5sFpdMyCUC/fieJS2mg=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg=="],
 

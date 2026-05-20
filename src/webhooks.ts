@@ -16,6 +16,12 @@ export interface SubscribeOptions {
   token: string;
   /** webhook.site API key — required when the token is owned by a paid account. */
   apiKey?: string;
+  /**
+   * Ed25519 public key (base64-encoded SPKI DER) used to verify signatures.
+   * Defaults to the production key from `@tesser-payments/types`. Override
+   * with `WEBHOOK_SANDBOX_PUBLIC_KEY` when running against sandbox.
+   */
+  publicKey?: string;
   apiBaseUrl?: string;
   verifySignatures?: boolean;
   pollIntervalMs?: number;
@@ -117,9 +123,9 @@ function extractHeader(headers: Record<string, string | string[]>, name: string)
   return null;
 }
 
-function buildPublicKey() {
+function buildPublicKey(keyB64: string) {
   return createPublicKey({
-    key: Buffer.from(WEBHOOK_PUBLIC_KEY, "base64"),
+    key: Buffer.from(keyB64, "base64"),
     type: "spki",
     format: "der",
   });
@@ -168,7 +174,7 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
   const apiBaseUrl = opts.apiBaseUrl ?? DEFAULT_API_BASE_URL;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const verifySignatures = opts.verifySignatures ?? true;
-  const publicKey = buildPublicKey();
+  const publicKey = buildPublicKey(opts.publicKey ?? WEBHOOK_PUBLIC_KEY);
 
   let windowStart: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
