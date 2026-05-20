@@ -1,16 +1,52 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import pc from "picocolors";
+import { authenticate, get } from "../../src/client.ts";
 import { SHARED_STATE_LOG_PATH, type SharedAction } from "../shared-state.ts";
 
+export const NETWORKS_FILE_PATH = join(
+  process.env.TMPDIR || "/tmp",
+  "api-demo-networks.json",
+);
+
+export interface NetworkInfo {
+  key: string;
+  name?: string;
+}
+
 // Vitest globalSetup runs once per process (in main, not in test workers).
-// It truncates the file-based action log at start and prints a summary at
-// teardown by reading whatever workers appended.
-export default function setup() {
-  // Truncate any previous run's log.
+// Responsibilities:
+//   - Truncate the shared-state action log so each run starts fresh.
+//   - Authenticate and fetch /v1/networks; write the list to a file the
+//     flow tests can read synchronously at module load time for test.each.
+//   - On teardown, print the shared-state action summary.
+export default async function setup() {
+  // Truncate any previous shared-state action log.
   try {
     if (existsSync(SHARED_STATE_LOG_PATH)) unlinkSync(SHARED_STATE_LOG_PATH);
   } catch {
-    // Non-fatal; the appendFileSync in recordAction will overwrite as needed.
+    // Non-fatal.
+  }
+
+  // Fetch supported networks once for parameterized flow tests.
+  try {
+    await authenticate();
+    const res = await get<{ data: NetworkInfo[] }>("/v1/networks");
+    writeFileSync(NETWORKS_FILE_PATH, JSON.stringify(res.data, null, 2));
+    console.log(
+      pc.dim(
+        `[setup] wrote ${res.data.length} networks to ${NETWORKS_FILE_PATH}`,
+      ),
+    );
+  } catch (err) {
+    // Don't fail the whole suite over this — flow tests can fall back to a
+    // single hardcoded network if the file is missing.
+    console.warn(
+      pc.yellow(
+        `[setup] failed to fetch /v1/networks: ${err instanceof Error ? err.message : err}. ` +
+          "Flow tests that need network variants will fall back to STELLAR only.",
+      ),
+    );
   }
 
   return () => {

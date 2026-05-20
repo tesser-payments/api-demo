@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../../src/client.ts";
@@ -9,8 +10,27 @@ import { run as deposit } from "../../examples/deposit-funds-via-a-liquidity-pro
 import { run as payout } from "../../examples/create-a-stablecoin-payout.ts";
 import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
+import {
+  NETWORKS_FILE_PATH,
+  type NetworkInfo,
+} from "../setup/seed-and-summary.ts";
 
-describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
+// Resolve the supported networks at module load. globalSetup writes this
+// file before the test files load. Fallback to STELLAR if missing.
+function loadNetworks(): NetworkInfo[] {
+  if (!existsSync(NETWORKS_FILE_PATH)) {
+    return [{ key: "STELLAR" }];
+  }
+  try {
+    return JSON.parse(readFileSync(NETWORKS_FILE_PATH, "utf8")) as NetworkInfo[];
+  } catch {
+    return [{ key: "STELLAR" }];
+  }
+}
+
+const networks = loadNetworks();
+
+describe("create a stablecoin payout", () => {
   let sub: WebhookSubscription;
 
   beforeEach(async () => {
@@ -37,12 +57,11 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
     sub?.stop();
   });
 
-  test(
-    "emits expected event sequence and progresses DEA overlays",
-    async () => {
-      // Reuse a funded ledger if a prior test in this process already created
-      // one for this provider/currency. Otherwise, run the deposit flow to
-      // fund a fresh one and register it for downstream reuse.
+  test.each(networks)(
+    "emits expected event sequence on $key",
+    async (network) => {
+      // Reuse a funded ledger if one exists, else fund a fresh one and
+      // register it for downstream reuse by the deposit-via-LP test.
       const existing = sharedState.findFundedLedger({
         provider: "CIRCLE_MINT",
         currency: "USDC",
@@ -50,7 +69,7 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
       let ledgerAccountId: string;
       if (existing) {
         sharedState.markReused(
-          "payout / Circle / Stellar",
+          `payout / Circle / ${network.key}`,
           "ledger",
           existing.id,
           `originally from ${existing.createdBy}`,
@@ -64,7 +83,7 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
             provider: "CIRCLE_MINT",
             currency: "USDC",
             hasBalance: true,
-            createdBy: "payout / Circle / Stellar (inline fund)",
+            createdBy: `payout / Circle / ${network.key} (inline fund)`,
           },
           `deposit ${funded.depositId}`,
         );
@@ -74,6 +93,7 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
       const result = await payout({
         ledgerAccountId,
         amount: "0.01",
+        network: network.key,
       });
 
       const events = await sub.scopedTo(result.paymentId).collectAll({

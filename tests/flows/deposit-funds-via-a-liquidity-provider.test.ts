@@ -35,18 +35,33 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
   test(
     "emits expected event sequence and progresses DEA overlays",
     async () => {
-      const result = await run({ depositAmount: "100.00" });
-
-      sharedState.registerLedger(
-        {
-          id: result.ledgerAccountId,
-          provider: "CIRCLE_MINT",
-          currency: "USDC",
-          hasBalance: true,
-          createdBy: "deposit-via-LP / org-level",
-        },
-        `deposit ${result.depositId}`,
-      );
+      const existing = sharedState.findFundedLedger({
+        provider: "CIRCLE_MINT",
+        currency: "USDC",
+      });
+      const result = await run({
+        depositAmount: "100.00",
+        ledgerAccountId: existing?.id,
+      });
+      if (existing) {
+        sharedState.markReused(
+          "deposit-via-LP / org-level",
+          "ledger",
+          existing.id,
+          `originally from ${existing.createdBy}, deposit ${result.depositId}`,
+        );
+      } else {
+        sharedState.registerLedger(
+          {
+            id: result.ledgerAccountId,
+            provider: "CIRCLE_MINT",
+            currency: "USDC",
+            hasBalance: true,
+            createdBy: "deposit-via-LP / org-level",
+          },
+          `deposit ${result.depositId}`,
+        );
+      }
 
       const events = await sub.scopedTo(result.depositId).collectAll({
         expectedTypes: EXPECTED_DEPOSIT_LP.types,

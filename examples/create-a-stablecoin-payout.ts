@@ -5,9 +5,10 @@ import { authenticate, get, getAll, post } from "../src/client.ts";
 export const meta = {
   name: "Create a stablecoin payout",
   description:
-    "USDC outbound from a Circle Mint ledger to a self-custodial Stellar wallet. " +
-    "Creates the beneficiary counterparty + wallet inline, posts the payment with " +
-    "the DEA `desired` overlay, then polls until `actual.to.amount` populates.",
+    "Stablecoin outbound from a Circle Mint ledger to a self-custodial wallet. " +
+    "Network and currency are inputs; defaults to USDC on Stellar. Creates the " +
+    "beneficiary counterparty + wallet inline, posts the payment with the DEA " +
+    "`desired` overlay, then polls until `actual.to.amount` populates.",
   docUrl:
     "https://docs.tesser.xyz/how-tos/send-a-stablecoin-payout/create-a-stablecoin-payout",
 } as const;
@@ -26,6 +27,15 @@ export interface StablecoinPayoutInput {
   beneficiaryWalletAddress?: string;
   /** Optional tenant ID. Counterparty + wallet inherit it. */
   tenantId?: string;
+  /**
+   * Currency to send. Defaults to "USDC".
+   */
+  currency?: string;
+  /**
+   * On-chain network. Defaults to "STELLAR". Use a value from the
+   * `/v1/networks` `key` field.
+   */
+  network?: string;
 }
 
 export interface StablecoinPayoutResult {
@@ -56,9 +66,20 @@ export interface PaymentResponse {
   }[];
 }
 
+const NETWORK_TO_WALLET_TYPE: Record<string, string> = {
+  STELLAR: "stablecoin_stellar",
+  ETHEREUM: "stablecoin_ethereum",
+  POLYGON: "stablecoin_ethereum",   // Polygon wallets share the Ethereum address space type
+  SOLANA: "stablecoin_solana",
+};
+
 export async function run(
   input: StablecoinPayoutInput,
 ): Promise<StablecoinPayoutResult> {
+  const network = input.network ?? "STELLAR";
+  const currency = input.currency ?? "USDC";
+  console.log(pc.dim(`  Payout: ${currency} on ${network}`));
+
   const walletAddress =
     input.beneficiaryWalletAddress ?? process.env.BENEFICIARY_WALLET_ADDRESS;
   if (!walletAddress) {
@@ -74,11 +95,12 @@ export async function run(
     `  Beneficiary: ${beneficiary.name} ${pc.dim(`(${beneficiary.id})`)}`,
   );
 
-  // 2. Create an unmanaged Stellar wallet account tied to the beneficiary.
+  // 2. Create an unmanaged wallet account tied to the beneficiary.
+  const walletType = NETWORK_TO_WALLET_TYPE[network] ?? "stablecoin_ethereum";
   const walletName = `${beneficiary.name}'s Wallet`;
   const walletPayload: Record<string, unknown> = {
     name: walletName,
-    type: "stablecoin_stellar",
+    type: walletType,
     is_managed: false,
     wallet_address: walletAddress,
     counterparty_id: beneficiary.id,
@@ -102,13 +124,13 @@ export async function run(
       from: {
         account_id: input.ledgerAccountId,
         amount: input.amount,
-        currency: "USDC",
-        network: "STELLAR",
+        currency,
+        network,
       },
       to: {
         account_id: walletAccountId,
-        currency: "USDC",
-        network: "STELLAR",
+        currency,
+        network,
       },
     },
   };

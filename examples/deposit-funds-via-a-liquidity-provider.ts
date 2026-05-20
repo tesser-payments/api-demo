@@ -23,6 +23,12 @@ export interface DepositLpInput {
    * Omit for org-level deposits.
    */
   tenantId?: string;
+  /**
+   * Pre-existing Circle Mint ledger to deposit into. When provided, the
+   * example skips counterparty + ledger creation and uses this ledger
+   * directly. Useful for composing multiple flows against one ledger.
+   */
+  ledgerAccountId?: string;
 }
 
 export interface DepositLpResult {
@@ -62,45 +68,52 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   const fundingBankId = await findOrCreateFundingBank();
   console.log(`  Funding bank: ${pc.cyan(fundingBankId)}`);
 
-  // 3. Create a fresh business counterparty for this run.
-  const customerName = faker.company.name();
-  const counterpartyPayload: Record<string, unknown> = {
-    classification: "business",
-    business_legal_name: customerName,
-    business_dba: customerName,
-    business_address_country: "US",
-    business_street_address1: faker.location.streetAddress(),
-    business_city: faker.location.city(),
-    business_state: faker.location.state({ abbreviated: true }),
-    business_postal_code: faker.location.zipCode(),
-    business_legal_entity_identifier: faker.string.alphanumeric({
-      length: 20,
-      casing: "upper",
-    }),
-  };
-  if (input.tenantId) counterpartyPayload.tenant_id = input.tenantId;
-  const customer = await post<{ data: { id: string } }>(
-    "/v1/entities/counterparties",
-    counterpartyPayload,
-  );
-  console.log(
-    `  Counterparty: ${customerName} ${pc.dim(`(${customer.data.id})`)}`,
-  );
+  // 3-4. Either reuse a provided ledger, or create a fresh counterparty
+  //      + Circle Mint ledger. Reuse path skips counterparty creation
+  //      because the existing ledger already has one.
+  let ledgerAccountId: string;
+  if (input.ledgerAccountId) {
+    ledgerAccountId = input.ledgerAccountId;
+    console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)} ${pc.dim("(reused)")}`);
+  } else {
+    const customerName = faker.company.name();
+    const counterpartyPayload: Record<string, unknown> = {
+      classification: "business",
+      business_legal_name: customerName,
+      business_dba: customerName,
+      business_address_country: "US",
+      business_street_address1: faker.location.streetAddress(),
+      business_city: faker.location.city(),
+      business_state: faker.location.state({ abbreviated: true }),
+      business_postal_code: faker.location.zipCode(),
+      business_legal_entity_identifier: faker.string.alphanumeric({
+        length: 20,
+        casing: "upper",
+      }),
+    };
+    if (input.tenantId) counterpartyPayload.tenant_id = input.tenantId;
+    const customer = await post<{ data: { id: string } }>(
+      "/v1/entities/counterparties",
+      counterpartyPayload,
+    );
+    console.log(
+      `  Counterparty: ${customerName} ${pc.dim(`(${customer.data.id})`)}`,
+    );
 
-  // 4. Create a Circle Mint ledger account tied to that counterparty.
-  const ledger = await post<{ data: { id: string } }>(
-    "/v1/accounts/ledgers",
-    {
-      name: `${customerName}'s Ledger`,
-      provider: "CIRCLE_MINT",
-      counterparty_id: customer.data.id,
-    },
-  );
-  const ledgerAccountId = ledger.data.id;
-  console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)}`);
+    const ledger = await post<{ data: { id: string } }>(
+      "/v1/accounts/ledgers",
+      {
+        name: `${customerName}'s Ledger`,
+        provider: "CIRCLE_MINT",
+        counterparty_id: customer.data.id,
+      },
+    );
+    ledgerAccountId = ledger.data.id;
+    console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)}`);
 
-  // 4.5. Wait for Circle to finish provisioning the ledger before depositing.
-  await waitForLedgerProvisioned(ledgerAccountId);
+    // Wait for Circle compliance ACCEPTED before depositing into a new ledger.
+    await waitForLedgerProvisioned(ledgerAccountId);
+  }
 
   // 5. Create the deposit.
   const created = await post<{ data: DepositResponse }>(
