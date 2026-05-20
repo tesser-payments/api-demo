@@ -76,13 +76,15 @@ const NETWORK_TO_WALLET_TYPE: Record<string, string> = {
 /**
  * Resolves the recipient wallet address from env vars in priority order:
  *   1. BENEFICIARY_WALLET_ADDRESS_<NETWORK>  (e.g. BENEFICIARY_WALLET_ADDRESS_POLYGON)
- *   2. BENEFICIARY_WALLET_ADDRESS  (legacy single-network fallback)
- * Returns undefined if neither is set.
+ *   2. BENEFICIARY_WALLET_ADDRESS  (legacy var, treated as STELLAR-only since
+ *      its address format is Stellar; do not apply to other chains).
+ * Returns undefined if neither applies.
  */
-function resolveWalletAddress(network: string): string | undefined {
+export function resolveWalletAddress(network: string): string | undefined {
   const specific = process.env[`BENEFICIARY_WALLET_ADDRESS_${network}`];
   if (specific) return specific;
-  return process.env.BENEFICIARY_WALLET_ADDRESS;
+  if (network === "STELLAR") return process.env.BENEFICIARY_WALLET_ADDRESS;
+  return undefined;
 }
 
 export async function run(

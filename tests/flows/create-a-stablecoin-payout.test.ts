@@ -7,7 +7,10 @@ import {
   type WebhookSubscription,
 } from "../../src/webhooks.ts";
 import { run as deposit } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
-import { run as payout } from "../../examples/create-a-stablecoin-payout.ts";
+import {
+  resolveWalletAddress,
+  run as payout,
+} from "../../examples/create-a-stablecoin-payout.ts";
 import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
 import {
@@ -52,24 +55,14 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
-  const networksWithAddress = networks.filter((n) =>
-    process.env[`BENEFICIARY_WALLET_ADDRESS_${n.key}`] ||
-    process.env.BENEFICIARY_WALLET_ADDRESS
-  );
-
-  const configuredNetworks = networksWithAddress
-    .map((n) => n.key)
-    .join(", ");
+  const networksWithAddress = networks.filter((n) => !!resolveWalletAddress(n.key));
   const skippedNetworks = networks
-    .filter((n) =>
-      !process.env[`BENEFICIARY_WALLET_ADDRESS_${n.key}`] &&
-      !process.env.BENEFICIARY_WALLET_ADDRESS
-    )
+    .filter((n) => !resolveWalletAddress(n.key))
     .map((n) => n.key);
   if (skippedNetworks.length > 0) {
     console.log(
       `[payout] skipping networks without configured wallet: ${skippedNetworks.join(", ")} ` +
-      `(set BENEFICIARY_WALLET_ADDRESS_<NETWORK> in .env to enable)`,
+        `(set BENEFICIARY_WALLET_ADDRESS_<NETWORK> in .env to enable)`,
     );
   }
 
