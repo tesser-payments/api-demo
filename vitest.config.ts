@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
       // Generous default test timeout for sandbox round-trips with retries.
       testTimeout: 300_000,
       globalSetup: ["./tests/setup/seed-and-summary.ts"],
+      reporters: ["default", "./tests/setup/test-plan-reporter.ts"],
       sequence: {
         shuffle: {
           files: true,
