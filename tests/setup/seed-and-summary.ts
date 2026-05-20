@@ -2,7 +2,6 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pc from "picocolors";
 import { loadEnv } from "vite";
-import { authenticate, get } from "../../src/client.ts";
 import { SHARED_STATE_LOG_PATH, type SharedAction } from "../shared-state.ts";
 
 export const NETWORKS_FILE_PATH = join(
@@ -37,7 +36,10 @@ export default async function setup() {
   }
 
   // Fetch supported networks once for parameterized flow tests.
+  // Dynamic import so client.ts captures the env vars we just populated;
+  // a top-level import would freeze them at module load (before loadEnv).
   try {
+    const { authenticate, get } = await import("../../src/client.ts");
     await authenticate();
     const res = await get<{ data: NetworkInfo[] }>("/v1/networks");
     writeFileSync(NETWORKS_FILE_PATH, JSON.stringify(res.data, null, 2));
