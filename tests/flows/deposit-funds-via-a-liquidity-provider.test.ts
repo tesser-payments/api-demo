@@ -6,6 +6,7 @@ import {
   type WebhookSubscription,
 } from "../../src/webhooks.ts";
 import { run } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
+import { run as createTenant } from "../../examples/create-a-tenant.ts";
 import { EXPECTED_DEPOSIT_LP } from "../helpers/expected-events.ts";
 
 describe("deposit funds via a liquidity provider (Circle Mint)", () => {
@@ -53,6 +54,34 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
     },
     // 60 min: example.run() can take up to 25 min (sandbox sim duration) +
     // collectAll up to 10 min for webhook delivery lag + buffer for slow runs.
+    60 * 60 * 1000,
+  );
+
+  test(
+    "deposit succeeds under a tenant",
+    async () => {
+      const tenant = await createTenant({});
+
+      const result = await run({
+        depositAmount: "100.00",
+        tenantId: tenant.tenantId,
+      });
+
+      const events = await sub.scopedTo(result.depositId).collectAll({
+        expectedTypes: EXPECTED_DEPOSIT_LP.types,
+        timeoutMs: 10 * 60 * 1000,
+      });
+
+      expect(events.map((e) => e.type)).toEqual([
+        ...EXPECTED_DEPOSIT_LP.types,
+      ]);
+      expect(events.filter((e) => !e.signatureValid)).toEqual([]);
+      expect(result.deposit.desired).toMatchObject(
+        EXPECTED_DEPOSIT_LP.terminal.desired,
+      );
+      expect(result.deposit.estimated).toBeDefined();
+      expect(result.deposit.actual?.to?.amount).toBeDefined();
+    },
     60 * 60 * 1000,
   );
 });

@@ -17,6 +17,12 @@ export interface DepositLpInput {
   fromCurrency?: string;
   /** Defaults to "USDC". */
   toCurrency?: string;
+  /**
+   * Optional tenant ID. When provided, the counterparty is created under
+   * the tenant; the ledger inherits tenant scope via its counterparty.
+   * Omit for org-level deposits.
+   */
+  tenantId?: string;
 }
 
 export interface DepositLpResult {
@@ -58,22 +64,24 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
 
   // 3. Create a fresh business counterparty for this run.
   const customerName = faker.company.name();
+  const counterpartyPayload: Record<string, unknown> = {
+    classification: "business",
+    business_legal_name: customerName,
+    business_dba: customerName,
+    business_address_country: "US",
+    business_street_address1: faker.location.streetAddress(),
+    business_city: faker.location.city(),
+    business_state: faker.location.state({ abbreviated: true }),
+    business_postal_code: faker.location.zipCode(),
+    business_legal_entity_identifier: faker.string.alphanumeric({
+      length: 20,
+      casing: "upper",
+    }),
+  };
+  if (input.tenantId) counterpartyPayload.tenant_id = input.tenantId;
   const customer = await post<{ data: { id: string } }>(
     "/v1/entities/counterparties",
-    {
-      classification: "business",
-      business_legal_name: customerName,
-      business_dba: customerName,
-      business_address_country: "US",
-      business_street_address1: faker.location.streetAddress(),
-      business_city: faker.location.city(),
-      business_state: faker.location.state({ abbreviated: true }),
-      business_postal_code: faker.location.zipCode(),
-      business_legal_entity_identifier: faker.string.alphanumeric({
-        length: 20,
-        casing: "upper",
-      }),
-    },
+    counterpartyPayload,
   );
   console.log(
     `  Counterparty: ${customerName} ${pc.dim(`(${customer.data.id})`)}`,
