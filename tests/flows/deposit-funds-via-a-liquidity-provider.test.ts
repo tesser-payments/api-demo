@@ -8,6 +8,7 @@ import {
 import { run } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
 import { run as createTenant } from "../../examples/create-a-tenant.ts";
 import { EXPECTED_DEPOSIT_LP } from "../helpers/expected-events.ts";
+import { sharedState } from "../shared-state.ts";
 
 describe("deposit funds via a liquidity provider (Circle Mint)", () => {
   let sub: WebhookSubscription;
@@ -35,6 +36,17 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
     "emits expected event sequence and progresses DEA overlays",
     async () => {
       const result = await run({ depositAmount: "100.00" });
+
+      sharedState.registerLedger(
+        {
+          id: result.ledgerAccountId,
+          provider: "CIRCLE_MINT",
+          currency: "USDC",
+          hasBalance: true,
+          createdBy: "deposit-via-LP / org-level",
+        },
+        `deposit ${result.depositId}`,
+      );
 
       const events = await sub.scopedTo(result.depositId).collectAll({
         expectedTypes: EXPECTED_DEPOSIT_LP.types,
@@ -66,6 +78,18 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
         depositAmount: "100.00",
         tenantId: tenant.tenantId,
       });
+
+      sharedState.registerLedger(
+        {
+          id: result.ledgerAccountId,
+          provider: "CIRCLE_MINT",
+          currency: "USDC",
+          hasBalance: true,
+          tenantId: tenant.tenantId,
+          createdBy: "deposit-via-LP / tenant",
+        },
+        `deposit ${result.depositId} under tenant ${tenant.tenantId.slice(0, 8)}`,
+      );
 
       const events = await sub.scopedTo(result.depositId).collectAll({
         expectedTypes: EXPECTED_DEPOSIT_LP.types,

@@ -8,6 +8,7 @@ import {
 import { run as deposit } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
 import { run as payout } from "../../examples/create-a-stablecoin-payout.ts";
 import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
+import { sharedState } from "../shared-state.ts";
 
 describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
   let sub: WebhookSubscription;
@@ -39,13 +40,39 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
   test(
     "emits expected event sequence and progresses DEA overlays",
     async () => {
-      // Fund a fresh ledger via the deposit flow. Webhooks for the deposit
-      // arrive in `sub` but are out of scope for the payout test's assertions
-      // because we'll scope to paymentId, not depositId.
-      const funded = await deposit({ depositAmount: "100.00" });
+      // Reuse a funded ledger if a prior test in this process already created
+      // one for this provider/currency. Otherwise, run the deposit flow to
+      // fund a fresh one and register it for downstream reuse.
+      const existing = sharedState.findFundedLedger({
+        provider: "CIRCLE_MINT",
+        currency: "USDC",
+      });
+      let ledgerAccountId: string;
+      if (existing) {
+        sharedState.markReused(
+          "payout / Circle / Stellar",
+          "ledger",
+          existing.id,
+          `originally from ${existing.createdBy}`,
+        );
+        ledgerAccountId = existing.id;
+      } else {
+        const funded = await deposit({ depositAmount: "100.00" });
+        sharedState.registerLedger(
+          {
+            id: funded.ledgerAccountId,
+            provider: "CIRCLE_MINT",
+            currency: "USDC",
+            hasBalance: true,
+            createdBy: "payout / Circle / Stellar (inline fund)",
+          },
+          `deposit ${funded.depositId}`,
+        );
+        ledgerAccountId = funded.ledgerAccountId;
+      }
 
       const result = await payout({
-        ledgerAccountId: funded.ledgerAccountId,
+        ledgerAccountId,
         amount: "0.01",
       });
 
@@ -64,8 +91,6 @@ describe("create a stablecoin payout (USDC → Stellar wallet)", () => {
       expect(result.payment.estimated).toBeDefined();
       expect(result.payment.actual?.to?.amount).toBeDefined();
     },
-    // 90 min: deposit can take up to 25 min, payout up to 25 min, plus
-    // webhook collection up to 10 min for the payout. Buffer for slow sandbox.
     90 * 60 * 1000,
   );
 });

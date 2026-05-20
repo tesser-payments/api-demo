@@ -6,16 +6,27 @@ export default defineConfig(({ mode }) => {
   // Load .env (no suffix) for all modes so flow tests get WEBHOOK_SITE_TOKEN.
   const env = loadEnv(mode, process.cwd(), "");
 
+  const seedFromEnv = process.env.VITEST_SEED ?? env.VITEST_SEED;
+  const seed = seedFromEnv ? Number(seedFromEnv) : Date.now();
+
   return {
     test: {
       env,
       include: ["tests/**/*.test.ts"],
       environment: "node",
-      // Flow tests share one webhook.site token and the sandbox is sequential
-      // by design. Parallel file execution would interleave webhook arrivals.
+      // Shared-state pool requires single-thread execution. File parallelism
+      // off; sequence.shuffle randomizes order within that constraint.
       fileParallelism: false,
       // Generous default test timeout for sandbox round-trips with retries.
       testTimeout: 300_000,
+      globalSetup: ["./tests/setup/seed-and-summary.ts"],
+      sequence: {
+        shuffle: {
+          files: true,
+          tests: true,
+        },
+        seed,
+      },
       server: {
         deps: {
           // @tesser-payments/types uses directory-style ESM imports that
