@@ -66,7 +66,7 @@ export interface PaymentResponse {
   }[];
 }
 
-type AddressClass = "STELLAR" | "SOLANA" | "EVM";
+type AddressClass = "STELLAR" | "EVM";
 
 // EVM-compatible chains all share Ethereum-style 0x... addresses and use
 // the same `stablecoin_ethereum` account type. Add to this set when the
@@ -81,26 +81,23 @@ const EVM_NETWORKS = new Set([
   "BSC",
 ]);
 
-function networkAddressClass(network: string): AddressClass | undefined {
+export function networkAddressClass(network: string): AddressClass | undefined {
   if (network === "STELLAR") return "STELLAR";
-  if (network === "SOLANA") return "SOLANA";
   if (EVM_NETWORKS.has(network)) return "EVM";
   return undefined;
 }
 
 const ADDRESS_CLASS_TO_WALLET_TYPE: Record<AddressClass, string> = {
   STELLAR: "stablecoin_stellar",
-  SOLANA: "stablecoin_solana",
   EVM: "stablecoin_ethereum",
 };
 
 /**
  * Resolves the recipient wallet address from env vars. One address per
- * address-class (EVM/SOLANA/STELLAR) — EVM chains share `BENEFICIARY_WALLET_ADDRESS_EVM`
- * because they all use the same 0x... address format. STELLAR also falls
- * back to the legacy single-network `BENEFICIARY_WALLET_ADDRESS` for
- * backwards compatibility. Returns undefined when no usable env var is set
- * (test should skip that network).
+ * address-class — EVM chains all share `BENEFICIARY_WALLET_ADDRESS_EVM`
+ * because they use the same 0x... address format. STELLAR also falls
+ * back to the legacy `BENEFICIARY_WALLET_ADDRESS` for backwards compat.
+ * Returns undefined when no usable env var is set (test should skip).
  */
 export function resolveWalletAddress(network: string): string | undefined {
   const klass = networkAddressClass(network);
