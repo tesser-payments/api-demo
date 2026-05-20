@@ -33,6 +33,17 @@ function loadNetworks(): NetworkInfo[] {
 
 const networks = loadNetworks();
 
+// Networks /v1/payments accepts. The /v1/networks endpoint can return values
+// (e.g. BASE) that the payments endpoint rejects with `payments-1001`. Update
+// when the platform reconciles the two lists.
+// See ~/.claude/projects/.../memory/project_networks_payments_mismatch.md
+const PAYMENTS_SUPPORTED_NETWORKS = new Set([
+  "POLYGON",
+  "STELLAR",
+  "ETHEREUM",
+  "SOLANA",
+]);
+
 describe("create a stablecoin payout", () => {
   let sub: WebhookSubscription;
 
@@ -55,14 +66,29 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
-  const networksWithAddress = networks.filter((n) => !!resolveWalletAddress(n.key));
-  const skippedNetworks = networks
+  const networksPlatformSupports = networks.filter((n) =>
+    PAYMENTS_SUPPORTED_NETWORKS.has(n.key),
+  );
+  const networksWithAddress = networksPlatformSupports.filter(
+    (n) => !!resolveWalletAddress(n.key),
+  );
+
+  const skippedNotSupported = networks
+    .filter((n) => !PAYMENTS_SUPPORTED_NETWORKS.has(n.key))
+    .map((n) => n.key);
+  const skippedNoAddress = networksPlatformSupports
     .filter((n) => !resolveWalletAddress(n.key))
     .map((n) => n.key);
-  if (skippedNetworks.length > 0) {
+  if (skippedNotSupported.length > 0) {
     console.log(
-      `[payout] skipping networks without configured wallet: ${skippedNetworks.join(", ")} ` +
-        `(set BENEFICIARY_WALLET_ADDRESS_<NETWORK> in .env to enable)`,
+      `[payout] skipping networks /v1/payments doesn't accept: ${skippedNotSupported.join(", ")} ` +
+        `(returned by /v1/networks but rejected with payments-1001)`,
+    );
+  }
+  if (skippedNoAddress.length > 0) {
+    console.log(
+      `[payout] skipping networks without configured wallet: ${skippedNoAddress.join(", ")} ` +
+        `(set BENEFICIARY_WALLET_ADDRESS_EVM / _STELLAR in .env to enable)`,
     );
   }
 
