@@ -1,22 +1,42 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import pc from "picocolors";
-import { sharedState } from "../shared-state.ts";
+import { SHARED_STATE_LOG_PATH, type SharedAction } from "../shared-state.ts";
 
-// Vitest globalSetup runs once per process. We use it to:
-//   (1) Establish the test order seed (allowing replay via VITEST_SEED).
-//   (2) Print the seed prominently for replication.
-//   (3) On teardown, print the full shared-state action log so the run
-//       can be reproduced/inspected after the fact.
+// Vitest globalSetup runs once per process (in main, not in test workers).
+// It truncates the file-based action log at start and prints a summary at
+// teardown by reading whatever workers appended.
 export default function setup() {
-  const seedFromEnv = process.env.VITEST_SEED;
-  const seed = seedFromEnv ? Number(seedFromEnv) : Date.now();
-  // Re-export so vitest.config.ts can pick it up.
-  process.env.VITEST_SEED = String(seed);
-
-  console.log(pc.bold(`\n${pc.cyan("==")} VITEST_SEED=${seed} ${pc.dim("(re-run with VITEST_SEED=" + seed + " to reproduce order)")}\n`));
+  // Truncate any previous run's log.
+  try {
+    if (existsSync(SHARED_STATE_LOG_PATH)) unlinkSync(SHARED_STATE_LOG_PATH);
+  } catch {
+    // Non-fatal; the appendFileSync in recordAction will overwrite as needed.
+  }
 
   return () => {
-    console.log("\n" + pc.bold(pc.cyan("== Final shared-state summary ==")));
-    console.log(sharedState.summary());
-    console.log(pc.dim(`(VITEST_SEED=${seed})\n`));
+    if (!existsSync(SHARED_STATE_LOG_PATH)) {
+      console.log(pc.dim("\n(no shared-state actions recorded)\n"));
+      return;
+    }
+    const raw = readFileSync(SHARED_STATE_LOG_PATH, "utf8");
+    const lines = raw.split("\n").filter(Boolean);
+    if (lines.length === 0) {
+      console.log(pc.dim("\n(no shared-state actions recorded)\n"));
+      return;
+    }
+    console.log("\n" + pc.bold(pc.cyan("== Shared-state action log ==")));
+    for (const line of lines) {
+      try {
+        const a = JSON.parse(line) as SharedAction;
+        const color = a.action === "CREATED" ? pc.green : pc.yellow;
+        const det = a.detail ? ` (${a.detail})` : "";
+        console.log(
+          `  ${color(a.action.padEnd(7))} ${a.kind.padEnd(8)} ${a.id}${det}  ${pc.dim("[" + a.test + "]")}`,
+        );
+      } catch {
+        // skip unparseable lines
+      }
+    }
+    console.log("");
   };
 }

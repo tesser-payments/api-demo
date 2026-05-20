@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import pc from "picocolors";
 
 export type LedgerProvider = "CIRCLE_MINT" | "OPENFX" | "KRAKEN";
@@ -17,6 +19,7 @@ export interface SharedTenant {
 }
 
 export interface SharedAction {
+  ts: string;
   test: string;
   action: "CREATED" | "REUSED";
   kind: string;
@@ -24,10 +27,17 @@ export interface SharedAction {
   detail?: string;
 }
 
+// Path of the JSON-lines action log. Both the in-worker singleton and the
+// main-process teardown reach for the same file. Truncated at globalSetup
+// start so each vitest run gets a fresh log.
+export const SHARED_STATE_LOG_PATH = join(
+  process.env.TMPDIR || "/tmp",
+  "api-demo-shared-state.log",
+);
+
 class SharedState {
   ledgers: SharedLedger[] = [];
   tenants: SharedTenant[] = [];
-  actions: SharedAction[] = [];
 
   findFundedLedger(filter: { provider: LedgerProvider; currency: string; tenantId?: string }): SharedLedger | undefined {
     return this.ledgers.find(
@@ -35,7 +45,6 @@ class SharedState {
         l.hasBalance &&
         l.provider === filter.provider &&
         l.currency === filter.currency &&
-        // exact match on tenantId (undefined matches undefined)
         l.tenantId === filter.tenantId,
     );
   }
@@ -51,21 +60,30 @@ class SharedState {
   }
 
   recordAction(test: string, action: "CREATED" | "REUSED", kind: string, id: string, detail?: string): void {
-    this.actions.push({ test, action, kind, id, detail });
+    const entry: SharedAction = {
+      ts: new Date().toISOString(),
+      test,
+      action,
+      kind,
+      id,
+      detail,
+    };
+
+    // Persist to a shared file so the main-process teardown can summarize.
+    try {
+      appendFileSync(SHARED_STATE_LOG_PATH, JSON.stringify(entry) + "\n");
+    } catch {
+      // Filesystem failure is non-fatal; log line below still surfaces.
+    }
+
+    // Real-time stderr log so the action is visible during test execution
+    // even when vitest intercepts stdout from passing tests.
     const color = action === "CREATED" ? pc.green : pc.yellow;
     const tag = color(action.padEnd(7));
     const det = detail ? pc.dim(` (${detail})`) : "";
-    console.log(`  ${tag} ${kind} ${pc.cyan(id)}${det}  ${pc.dim("[" + test + "]")}`);
-  }
-
-  summary(): string {
-    if (this.actions.length === 0) return "(no shared-state actions recorded)";
-    const lines = ["Shared-state action log:"];
-    for (const a of this.actions) {
-      const det = a.detail ? ` (${a.detail})` : "";
-      lines.push(`  ${a.action.padEnd(7)} ${a.kind.padEnd(8)} ${a.id}${det}  [${a.test}]`);
-    }
-    return lines.join("\n");
+    process.stderr.write(
+      `  ${tag} ${kind} ${pc.cyan(id)}${det}  ${pc.dim("[" + test + "]")}\n`,
+    );
   }
 }
 
