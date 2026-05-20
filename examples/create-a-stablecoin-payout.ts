@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
-import { authenticate, get, post } from "../src/client.ts";
+import { authenticate, get, getAll, post } from "../src/client.ts";
 
 export const meta = {
   name: "Create a stablecoin payout",
@@ -92,7 +92,12 @@ export async function run(
   console.log(`  Wallet account: ${pc.cyan(walletAccountId)}`);
 
   // 3. Create the payment. Uses the new DEA `desired` overlay shape.
+  // funding_account_id is required by the platform even when source and
+  // destination are USDC; defaults to the org-level fiat bank.
+  const fundingAccountId =
+    input.fundingAccountId ?? (await findOrCreateFundingBank());
   const paymentPayload: Record<string, unknown> = {
+    funding_account_id: fundingAccountId,
     desired: {
       from: {
         account_id: input.ledgerAccountId,
@@ -107,7 +112,6 @@ export async function run(
       },
     },
   };
-  if (input.fundingAccountId) paymentPayload.funding_account_id = input.fundingAccountId;
   const created = await post<{ data: PaymentResponse }>(
     "/v1/payments",
     paymentPayload,
@@ -205,6 +209,37 @@ async function pollPaymentTerminal(paymentId: string): Promise<PaymentResponse> 
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+}
+
+async function findOrCreateFundingBank(): Promise<string> {
+  const accounts = await getAll<{
+    id: string;
+    type: string;
+    is_managed?: boolean | null;
+    tenant_id?: string | null;
+    counterparty_id?: string | null;
+  }>("/v1/accounts");
+
+  const existing = accounts.find(
+    (a) =>
+      a.type === "fiat_bank" &&
+      !a.is_managed &&
+      !a.tenant_id &&
+      !a.counterparty_id,
+  );
+  if (existing) return existing.id;
+
+  const created = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name: "Depositing Bank",
+    bank_name: "Hancock Whitney Bank",
+    bank_code_type: "ROUTING",
+    bank_identifier_code: "065400153",
+    bank_account_number: "000999999991",
+    tenant_id: null,
+    counterparty_id: null,
+    bank_swift_code: "BARCGB22",
+  });
+  return created.data.id;
 }
 
 if (import.meta.main) {
