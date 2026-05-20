@@ -14,9 +14,13 @@ export default defineConfig(({ mode }) => {
       env,
       include: ["tests/**/*.test.ts"],
       environment: "node",
-      // Shared-state pool requires single-thread execution. File parallelism
-      // off; sequence.shuffle randomizes order within that constraint.
+      // All tests run in a single fork so the shared-state pool is one
+      // module instance across all files. fileParallelism is implied but
+      // we keep it explicit.
       fileParallelism: false,
+      pool: "forks",
+      maxWorkers: 1,
+      isolate: false,
       // Generous default test timeout for sandbox round-trips with retries.
       testTimeout: 300_000,
       globalSetup: ["./tests/setup/seed-and-summary.ts"],

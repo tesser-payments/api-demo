@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pc from "picocolors";
+import { loadEnv } from "vite";
 import { authenticate, get } from "../../src/client.ts";
 import { SHARED_STATE_LOG_PATH, type SharedAction } from "../shared-state.ts";
 
@@ -21,6 +22,13 @@ export interface NetworkInfo {
 //     flow tests can read synchronously at module load time for test.each.
 //   - On teardown, print the shared-state action summary.
 export default async function setup() {
+  // Vitest's test.env injects vars into workers only. globalSetup runs in
+  // the main process and needs its own loadEnv pass.
+  const env = loadEnv("test", process.cwd(), "");
+  for (const [k, v] of Object.entries(env)) {
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
+
   // Truncate any previous shared-state action log.
   try {
     if (existsSync(SHARED_STATE_LOG_PATH)) unlinkSync(SHARED_STATE_LOG_PATH);
