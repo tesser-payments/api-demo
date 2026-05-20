@@ -73,6 +73,18 @@ const NETWORK_TO_WALLET_TYPE: Record<string, string> = {
   SOLANA: "stablecoin_solana",
 };
 
+/**
+ * Resolves the recipient wallet address from env vars in priority order:
+ *   1. BENEFICIARY_WALLET_ADDRESS_<NETWORK>  (e.g. BENEFICIARY_WALLET_ADDRESS_POLYGON)
+ *   2. BENEFICIARY_WALLET_ADDRESS  (legacy single-network fallback)
+ * Returns undefined if neither is set.
+ */
+function resolveWalletAddress(network: string): string | undefined {
+  const specific = process.env[`BENEFICIARY_WALLET_ADDRESS_${network}`];
+  if (specific) return specific;
+  return process.env.BENEFICIARY_WALLET_ADDRESS;
+}
+
 export async function run(
   input: StablecoinPayoutInput,
 ): Promise<StablecoinPayoutResult> {
@@ -81,10 +93,10 @@ export async function run(
   console.log(pc.dim(`  Payout: ${currency} on ${network}`));
 
   const walletAddress =
-    input.beneficiaryWalletAddress ?? process.env.BENEFICIARY_WALLET_ADDRESS;
+    input.beneficiaryWalletAddress ?? resolveWalletAddress(network);
   if (!walletAddress) {
     throw new Error(
-      "beneficiaryWalletAddress is required (pass it or set BENEFICIARY_WALLET_ADDRESS).",
+      `beneficiaryWalletAddress is required for network=${network} (set BENEFICIARY_WALLET_ADDRESS_${network} in .env, or pass beneficiaryWalletAddress).`,
     );
   }
 

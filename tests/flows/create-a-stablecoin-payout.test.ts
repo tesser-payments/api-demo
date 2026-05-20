@@ -39,11 +39,6 @@ describe("create a stablecoin payout", () => {
         "WEBHOOK_SITE_TOKEN is required to run flow tests. Set it in .env.",
       );
     }
-    if (!process.env.BENEFICIARY_WALLET_ADDRESS) {
-      throw new Error(
-        "BENEFICIARY_WALLET_ADDRESS is required (Stellar wallet with USDC trustline). Set it in .env.",
-      );
-    }
     await authenticate();
     sub = subscribeToWebhooks({
       token: process.env.WEBHOOK_SITE_TOKEN,
@@ -57,8 +52,29 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
-  test.each(networks)(
-    "emits expected event sequence on $key",
+  const networksWithAddress = networks.filter((n) =>
+    process.env[`BENEFICIARY_WALLET_ADDRESS_${n.key}`] ||
+    process.env.BENEFICIARY_WALLET_ADDRESS
+  );
+
+  const configuredNetworks = networksWithAddress
+    .map((n) => n.key)
+    .join(", ");
+  const skippedNetworks = networks
+    .filter((n) =>
+      !process.env[`BENEFICIARY_WALLET_ADDRESS_${n.key}`] &&
+      !process.env.BENEFICIARY_WALLET_ADDRESS
+    )
+    .map((n) => n.key);
+  if (skippedNetworks.length > 0) {
+    console.log(
+      `[payout] skipping networks without configured wallet: ${skippedNetworks.join(", ")} ` +
+      `(set BENEFICIARY_WALLET_ADDRESS_<NETWORK> in .env to enable)`,
+    );
+  }
+
+  test.each(networksWithAddress)(
+    "emits expected event sequence on '$key'",
     async (network) => {
       // Reuse a funded ledger if one exists, else fund a fresh one and
       // register it for downstream reuse by the deposit-via-LP test.
