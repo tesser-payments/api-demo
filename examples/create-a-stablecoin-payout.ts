@@ -112,11 +112,8 @@ export async function run(
       },
     },
   };
-  const created = await post<{ data: PaymentResponse }>(
-    "/v1/payments",
-    paymentPayload,
-  );
-  const paymentId = created.data.id;
+  const created = await createPaymentWhenReady(paymentPayload);
+  const paymentId = created.id;
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
   // 4. Poll the payment resource until DEA `actual.to.amount` populates.
@@ -175,6 +172,34 @@ async function createBeneficiary(
     payload,
   );
   return { id: res.data.id, name };
+}
+
+async function createPaymentWhenReady(
+  payload: Record<string, unknown>,
+): Promise<PaymentResponse> {
+  // Newly-created self-custodial wallets undergo asynchronous risk approval
+  // before they can receive a payment. The custodian flips the state from
+  // the API side; there's no observable readiness flag on the wallet, so we
+  // retry the create-payment call until the wallet is approved.
+  const intervalMs = 10_000;
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (true) {
+    try {
+      const res = await post<{ data: PaymentResponse }>("/v1/payments", payload);
+      return res.data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only retry the wallet risk-approval race. Anything else is real.
+      if (!msg.includes("payments-3017")) throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Payment could not be created within 5 min: ${msg}`,
+        );
+      }
+      console.log(pc.dim("  Waiting for wallet risk approval..."));
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
 }
 
 async function pollPaymentTerminal(paymentId: string): Promise<PaymentResponse> {
