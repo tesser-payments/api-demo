@@ -66,24 +66,48 @@ export interface PaymentResponse {
   }[];
 }
 
-const NETWORK_TO_WALLET_TYPE: Record<string, string> = {
+type AddressClass = "STELLAR" | "SOLANA" | "EVM";
+
+// EVM-compatible chains all share Ethereum-style 0x... addresses and use
+// the same `stablecoin_ethereum` account type. Add to this set when the
+// platform exposes a new EVM chain.
+const EVM_NETWORKS = new Set([
+  "ETHEREUM",
+  "POLYGON",
+  "BASE",
+  "AVALANCHE",
+  "ARBITRUM",
+  "OPTIMISM",
+  "BSC",
+]);
+
+function networkAddressClass(network: string): AddressClass | undefined {
+  if (network === "STELLAR") return "STELLAR";
+  if (network === "SOLANA") return "SOLANA";
+  if (EVM_NETWORKS.has(network)) return "EVM";
+  return undefined;
+}
+
+const ADDRESS_CLASS_TO_WALLET_TYPE: Record<AddressClass, string> = {
   STELLAR: "stablecoin_stellar",
-  ETHEREUM: "stablecoin_ethereum",
-  POLYGON: "stablecoin_ethereum",   // Polygon wallets share the Ethereum address space type
   SOLANA: "stablecoin_solana",
+  EVM: "stablecoin_ethereum",
 };
 
 /**
- * Resolves the recipient wallet address from env vars in priority order:
- *   1. BENEFICIARY_WALLET_ADDRESS_<NETWORK>  (e.g. BENEFICIARY_WALLET_ADDRESS_POLYGON)
- *   2. BENEFICIARY_WALLET_ADDRESS  (legacy var, treated as STELLAR-only since
- *      its address format is Stellar; do not apply to other chains).
- * Returns undefined if neither applies.
+ * Resolves the recipient wallet address from env vars. One address per
+ * address-class (EVM/SOLANA/STELLAR) — EVM chains share `BENEFICIARY_WALLET_ADDRESS_EVM`
+ * because they all use the same 0x... address format. STELLAR also falls
+ * back to the legacy single-network `BENEFICIARY_WALLET_ADDRESS` for
+ * backwards compatibility. Returns undefined when no usable env var is set
+ * (test should skip that network).
  */
 export function resolveWalletAddress(network: string): string | undefined {
-  const specific = process.env[`BENEFICIARY_WALLET_ADDRESS_${network}`];
-  if (specific) return specific;
-  if (network === "STELLAR") return process.env.BENEFICIARY_WALLET_ADDRESS;
+  const klass = networkAddressClass(network);
+  if (!klass) return undefined;
+  const fromClassEnv = process.env[`BENEFICIARY_WALLET_ADDRESS_${klass}`];
+  if (fromClassEnv) return fromClassEnv;
+  if (klass === "STELLAR") return process.env.BENEFICIARY_WALLET_ADDRESS;
   return undefined;
 }
 
@@ -94,11 +118,19 @@ export async function run(
   const currency = input.currency ?? "USDC";
   console.log(pc.dim(`  Payout: ${currency} on ${network}`));
 
+  const klass = networkAddressClass(network);
+  if (!klass) {
+    throw new Error(
+      `Unsupported network ${network}: not classified as STELLAR/SOLANA/EVM. ` +
+        `Add it to EVM_NETWORKS or networkAddressClass() in create-a-stablecoin-payout.ts.`,
+    );
+  }
   const walletAddress =
     input.beneficiaryWalletAddress ?? resolveWalletAddress(network);
   if (!walletAddress) {
     throw new Error(
-      `beneficiaryWalletAddress is required for network=${network} (set BENEFICIARY_WALLET_ADDRESS_${network} in .env, or pass beneficiaryWalletAddress).`,
+      `beneficiaryWalletAddress is required for network=${network} ` +
+        `(set BENEFICIARY_WALLET_ADDRESS_${klass} in .env, or pass beneficiaryWalletAddress).`,
     );
   }
 
@@ -110,7 +142,7 @@ export async function run(
   );
 
   // 2. Create an unmanaged wallet account tied to the beneficiary.
-  const walletType = NETWORK_TO_WALLET_TYPE[network] ?? "stablecoin_ethereum";
+  const walletType = ADDRESS_CLASS_TO_WALLET_TYPE[klass];
   const walletName = `${beneficiary.name}'s Wallet`;
   const walletPayload: Record<string, unknown> = {
     name: walletName,
