@@ -11,9 +11,18 @@ export interface FlowVariant {
   network?: string;
 }
 
-// Module-level registry — populated at test-define time, read by the reporter
-// in the same process (singleFork). Keyed by the test's display name.
-const VARIANTS = new Map<string, FlowVariant>();
+// Registry shared between the test loader and the reporter loader via
+// globalThis. Vitest 4 loads reporters and test modules through different
+// resolvers even with singleFork + isolate=false, which means a plain
+// module-level Map would be a different instance for each. globalThis is
+// the only object both module realms see.
+declare global {
+  // eslint-disable-next-line no-var
+  var __FLOW_VARIANTS__: Map<string, FlowVariant> | undefined;
+}
+const VARIANTS: Map<string, FlowVariant> =
+  globalThis.__FLOW_VARIANTS__ ?? new Map<string, FlowVariant>();
+globalThis.__FLOW_VARIANTS__ = VARIANTS;
 
 function buildName(variant: FlowVariant, description: string): string {
   const slug = variant.docUrl.split("/").filter(Boolean).pop() ?? variant.docUrl;
