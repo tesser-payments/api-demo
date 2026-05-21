@@ -87,7 +87,12 @@ interface RowData {
 }
 
 function buildRowData(planned: PlannedTest, idx: number, result?: string): RowData {
-  const variant = getFlowVariant(planned.fullName);
+  // Vitest's fullName is "<describe> > <test name>"; flowTest registers
+  // variants keyed by just the test name. Try the full string first, then
+  // the trailing segment after the last " > ".
+  const trailing = planned.fullName.split(" > ").pop() ?? planned.fullName;
+  const variant =
+    getFlowVariant(planned.fullName) ?? getFlowVariant(trailing);
 
   let doc: string;
   let provider: string;
@@ -100,9 +105,10 @@ function buildRowData(planned: PlannedTest, idx: number, result?: string): RowDa
     provider = trunc(variant.provider ?? "", COL.provider);
     currency = trunc(variant.currency ?? "", COL.currency);
     network = trunc(variant.network ?? "", COL.network);
-    // description is the last segment after the final " | "
-    const lastPipe = planned.fullName.lastIndexOf(" | ");
-    description = lastPipe >= 0 ? planned.fullName.slice(lastPipe + 3) : planned.fullName;
+    // Description is the test-name segment after the final " | "
+    // (flowTest encodes metadata pipes before the description).
+    const lastPipe = trailing.lastIndexOf(" | ");
+    description = lastPipe >= 0 ? trailing.slice(lastPipe + 3) : trailing;
   } else {
     // Unit test: use the module path as doc, test name as description
     doc = trunc(planned.module, COL.doc);
