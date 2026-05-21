@@ -21,14 +21,15 @@ const VARIANTS: Array<{
   label: string;
   withCounterparty: boolean;
   withTenant: boolean;
-  /** Platform-reject code that, if observed, marks this variant as skip. */
-  platformRejectCode?: string;
+  /** When set, the test skips up front with this reason. */
+  unsupported?: string;
 }> = [
   {
     label: "workspace",
     withCounterparty: false,
     withTenant: false,
-    platformRejectCode: "accounts-3006",
+    unsupported:
+      "platform rejects (accounts-3006): Circle Mint ledgers require a tenant or counterparty",
   },
   { label: "counterparty", withCounterparty: true, withTenant: false },
   { label: "tenant", withCounterparty: false, withTenant: true },
@@ -66,31 +67,20 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
       },
       `emits expected events (${v.label})`,
       async (ctx) => {
+        if (v.unsupported) {
+          ctx.skip(v.unsupported);
+          return;
+        }
         let tenantId: string | undefined;
         if (v.withTenant) {
           const tenant = await createTenant({});
           tenantId = tenant.tenantId;
         }
-        let result;
-        try {
-          result = await deposit({
-            depositAmount: "100.00",
-            withCounterparty: v.withCounterparty,
-            tenantId,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (
-            v.platformRejectCode &&
-            msg.includes(v.platformRejectCode)
-          ) {
-            ctx.skip(
-              `platform rejects (${v.platformRejectCode}): ` +
-                `Circle Mint requires either tenant or counterparty`,
-            );
-          }
-          throw err;
-        }
+        const result = await deposit({
+          depositAmount: "100.00",
+          withCounterparty: v.withCounterparty,
+          tenantId,
+        });
         sharedState.registerLedger(
           {
             id: result.ledgerAccountId,
