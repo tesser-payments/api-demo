@@ -49,8 +49,9 @@ export function flowTest(
 ): void {
   const name = buildName(variant, description);
   VARIANTS.set(name, variant);
+  // Vitest 4 takes (name, options?, fn?). Timeout goes via options.
   if (timeoutMs !== undefined) {
-    test(name, fn as Parameters<typeof test>[1], timeoutMs);
+    test(name, { timeout: timeoutMs }, fn as Parameters<typeof test>[2]);
   } else {
     test(name, fn as Parameters<typeof test>[1]);
   }
