@@ -1,5 +1,38 @@
 import pc from "picocolors";
-import { getFlowVariant, getDocSlug } from "../flow-test.ts";
+
+// The test name encodes its variant metadata via flowTest():
+//   docslug | provider=CIRCLE_MINT | currency=USDC | network=STELLAR | description
+// Parse it here so we don't depend on cross-module shared state between
+// the reporter loader and the test loader (which vitest isolates).
+interface ParsedVariant {
+  docSlug: string;
+  provider?: string;
+  currency?: string;
+  network?: string;
+  description: string;
+}
+
+function parseVariantFromName(name: string): ParsedVariant | undefined {
+  const parts = name.split(" | ");
+  if (parts.length < 2) return undefined;
+  const slug = parts[0]!;
+  // Must look like a kebab-case doc slug; otherwise this isn't a flowTest.
+  if (!/^[a-z][a-z0-9-]*$/.test(slug)) return undefined;
+  const v: ParsedVariant = {
+    docSlug: slug,
+    description: parts[parts.length - 1]!,
+  };
+  for (const part of parts.slice(1, -1)) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1);
+    if (key === "provider") v.provider = value;
+    else if (key === "currency") v.currency = value;
+    else if (key === "network") v.network = value;
+  }
+  return v;
+}
 
 // Vitest 4 reporter API. We use:
 //   - onTestRunStart(specs)       — captures total module count
@@ -87,12 +120,12 @@ interface RowData {
 }
 
 function buildRowData(planned: PlannedTest, idx: number, result?: string): RowData {
-  // Vitest's fullName is "<describe> > <test name>"; flowTest registers
-  // variants keyed by just the test name. Try the full string first, then
-  // the trailing segment after the last " > ".
+  // Vitest's fullName is "<describe> > <test name>"; flow-test names live
+  // in the trailing segment. Parse metadata directly from the test name —
+  // safer than a cross-module registry lookup (vitest isolates reporter
+  // and test module realms even with singleFork).
   const trailing = planned.fullName.split(" > ").pop() ?? planned.fullName;
-  const variant =
-    getFlowVariant(planned.fullName) ?? getFlowVariant(trailing);
+  const variant = parseVariantFromName(trailing);
 
   let doc: string;
   let provider: string;
@@ -101,16 +134,13 @@ function buildRowData(planned: PlannedTest, idx: number, result?: string): RowDa
   let description: string;
 
   if (variant) {
-    doc = trunc(getDocSlug(variant.docUrl), COL.doc);
+    doc = trunc(variant.docSlug, COL.doc);
     provider = trunc(variant.provider ?? "", COL.provider);
     currency = trunc(variant.currency ?? "", COL.currency);
     network = trunc(variant.network ?? "", COL.network);
-    // Description is the test-name segment after the final " | "
-    // (flowTest encodes metadata pipes before the description).
-    const lastPipe = trailing.lastIndexOf(" | ");
-    description = lastPipe >= 0 ? trailing.slice(lastPipe + 3) : trailing;
+    description = variant.description;
   } else {
-    // Unit test: use the module path as doc, test name as description
+    // Unit test: use the module path as doc, full vitest name as description
     doc = trunc(planned.module, COL.doc);
     provider = "";
     currency = "";

@@ -1,6 +1,18 @@
 import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
 
+// Suppress the noisy "Sourcemap for ... points to a source file outside
+// its package" warnings emitted by Vite for @tesser-payments/types
+// (whose published sourcemaps reference a /src/ path that doesn't ship
+// in the package). Filed-but-unfixed upstream; the warnings add zero
+// signal here. Vite emits these via console.warn, so we patch it.
+const _origConsoleWarn = console.warn.bind(console);
+console.warn = (...args: unknown[]) => {
+  const first = args[0];
+  if (typeof first === "string" && first.startsWith("Sourcemap for ")) return;
+  _origConsoleWarn(...args);
+};
+
 export default defineConfig(({ mode }) => {
   // Vite/Vitest do not auto-load .env the way Bun does.
   // Load .env (no suffix) for all modes so flow tests get WEBHOOK_SITE_TOKEN.
@@ -24,6 +36,7 @@ export default defineConfig(({ mode }) => {
       // Generous default test timeout for sandbox round-trips with retries.
       testTimeout: 300_000,
       globalSetup: ["./tests/setup/seed-and-summary.ts"],
+      setupFiles: ["./tests/setup/suppress-sourcemap-warnings.ts"],
       reporters: ["default", "./tests/setup/test-plan-reporter.ts"],
       sequence: {
         shuffle: {
