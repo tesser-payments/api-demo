@@ -36,15 +36,12 @@ const DEPOSIT_VARIANTS: Array<{
   label: string;
   withCounterparty: boolean;
   withTenant: boolean;
-  unsupported?: string;
 }> = [
-  {
-    label: "workspace",
-    withCounterparty: false,
-    withTenant: false,
-    unsupported:
-      "platform rejects (accounts-3006): Circle Mint ledgers require a tenant or counterparty",
-  },
+  // Workspace: the platform rejects POSTing a new workspace ledger
+  // (accounts-3006), but auto-creates one when a Circle Mint API key is
+  // first registered. The example discovers that pre-existing ledger and
+  // deposits into it; no creation in this run.
+  { label: "workspace", withCounterparty: false, withTenant: false },
   { label: "counterparty", withCounterparty: true, withTenant: false },
   { label: "tenant", withCounterparty: false, withTenant: true },
   { label: "counterparty-in-tenant", withCounterparty: true, withTenant: true },
@@ -98,11 +95,7 @@ describe("flow tests", () => {
         currency: "USDC",
       },
       `emits expected events (${v.label})`,
-      async (ctx) => {
-        if (v.unsupported) {
-          ctx.skip(v.unsupported);
-          return;
-        }
+      async () => {
         let tenantId: string | undefined;
         if (v.withTenant) {
           const tenant = await createTenant({});
@@ -113,23 +106,42 @@ describe("flow tests", () => {
           withCounterparty: v.withCounterparty,
           tenantId,
         });
-        sharedState.registerLedger(
-          {
-            id: result.ledgerAccountId,
-            provider: "CIRCLE_MINT",
-            currency: "USDC",
-            hasBalance: true,
-            tenantId,
-            counterpartyId: result.counterpartyId ?? undefined,
-            createdBy: `deposit-via-LP / ${v.label}`,
-          },
-          `deposit ${result.depositId}`,
-          {
-            operationKind: "deposit",
-            operationId: result.depositId,
-            operationSummary: "100 USD → USDC",
-          },
-        );
+        if (v.label === "workspace") {
+          // Workspace ledger pre-existed (auto-created when the Circle
+          // Mint key was first registered). Record as REUSED with that
+          // origin instead of CREATED.
+          sharedState.markReused(
+            `deposit-via-LP / ${v.label}`,
+            "ledger",
+            result.ledgerAccountId,
+            "auto-created when Circle Mint key was registered",
+            {
+              provider: "CIRCLE_MINT",
+              currency: "USDC",
+              operationKind: "deposit",
+              operationId: result.depositId,
+              operationSummary: "100 USD → USDC",
+            },
+          );
+        } else {
+          sharedState.registerLedger(
+            {
+              id: result.ledgerAccountId,
+              provider: "CIRCLE_MINT",
+              currency: "USDC",
+              hasBalance: true,
+              tenantId,
+              counterpartyId: result.counterpartyId ?? undefined,
+              createdBy: `deposit-via-LP / ${v.label}`,
+            },
+            `deposit ${result.depositId}`,
+            {
+              operationKind: "deposit",
+              operationId: result.depositId,
+              operationSummary: "100 USD → USDC",
+            },
+          );
+        }
         const events = await sub.scopedTo(result.depositId).collectAll({
           expectedTypes: EXPECTED_DEPOSIT_LP.types,
           timeoutMs: 10 * 60 * 1000,

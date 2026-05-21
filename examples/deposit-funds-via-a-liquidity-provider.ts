@@ -75,13 +75,32 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   const fundingBankId = await findOrCreateFundingBank();
   console.log(`  Funding bank: ${pc.cyan(fundingBankId)}`);
 
-  // 3-4. Either reuse a provided ledger, or create a fresh Circle Mint ledger
-  //      (optionally with a fresh counterparty). Reuse path skips creation.
+  // 3-4. Pick a destination ledger. Cases, in order:
+  //   a) Caller passed `ledgerAccountId` → reuse it.
+  //   b) `withCounterparty: false` and no `tenantId` → use the workspace-level
+  //      Circle Mint ledger that the platform auto-creates the first time a
+  //      Circle Mint API key is registered (you can't POST a new workspace
+  //      ledger; accounts-3006 rejects it).
+  //   c) Otherwise → create a fresh counterparty (when requested) and a
+  //      fresh ledger scoped by counterparty or tenant.
   let ledgerAccountId: string;
   let counterpartyId: string | null = null;
   if (input.ledgerAccountId) {
     ledgerAccountId = input.ledgerAccountId;
     console.log(`  Ledger account: ${pc.cyan(ledgerAccountId)} ${pc.dim("(reused)")}`);
+  } else if (input.withCounterparty === false && !input.tenantId) {
+    const found = await findWorkspaceCircleMintLedger();
+    if (!found) {
+      throw new Error(
+        "No workspace-level Circle Mint ledger found in this workspace. " +
+          "It is auto-created when a Circle Mint API key is first registered " +
+          "via POST /v1/organizations/secrets — register one and retry.",
+      );
+    }
+    ledgerAccountId = found;
+    console.log(
+      `  Workspace ledger: ${pc.cyan(ledgerAccountId)} ${pc.dim("(auto-created by Circle Mint key registration)")}`,
+    );
   } else {
     // 3. Optionally create a fresh business counterparty.
     let customerName = "(no counterparty)";
@@ -171,6 +190,28 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
   const terminal = await pollDepositTerminal(depositId);
 
   return { depositId, ledgerAccountId, counterpartyId, deposit: terminal };
+}
+
+async function findWorkspaceCircleMintLedger(): Promise<string | null> {
+  // The workspace-level Circle Mint ledger is auto-provisioned by the
+  // platform the first time a Circle Mint API key is registered. Find it
+  // by looking for a ledger with provider=CIRCLE_MINT and neither tenant
+  // nor counterparty scoping.
+  const accounts = await getAll<{
+    id: string;
+    type: string;
+    provider?: string | null;
+    tenant_id?: string | null;
+    counterparty_id?: string | null;
+  }>("/v1/accounts");
+  const found = accounts.find(
+    (a) =>
+      a.type === "ledger" &&
+      a.provider === "CIRCLE_MINT" &&
+      !a.tenant_id &&
+      !a.counterparty_id,
+  );
+  return found?.id ?? null;
 }
 
 async function ensureCircleMintKey(): Promise<void> {
