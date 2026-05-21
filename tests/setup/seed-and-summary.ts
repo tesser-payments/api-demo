@@ -95,20 +95,23 @@ export default async function setup() {
 
     for (const [id, entries] of byId) {
       const shortId = id.slice(0, 8);
+      // Prefer the CREATED entry's metadata, but fall back to any entry's
+      // metadata so REUSED-only resources (e.g., the pre-existing workspace
+      // ledger) still get a proper header annotation.
       const created = entries.find((e) => e.action === "CREATED");
+      const meta = created ?? entries.find((e) => e.provider || e.currency) ?? entries[0];
 
-      // Build resource header: kind + short id + provider/currency + scope (+ tenant id if scoped)
       const kind = entries[0]?.kind ?? "resource";
       const headerParts: string[] = [`${kind} ${shortId}`];
-      if (created?.provider || created?.currency) {
-        const meta: string[] = [];
-        if (created.provider) meta.push(created.provider);
-        if (created.currency) meta.push(created.currency);
-        headerParts.push(meta.join(" "));
+      if (meta?.provider || meta?.currency) {
+        const metaCols: string[] = [];
+        if (meta.provider) metaCols.push(meta.provider);
+        if (meta.currency) metaCols.push(meta.currency);
+        headerParts.push(metaCols.join(" "));
       }
-      const scope = created?.scope ?? "workspace";
+      const scope = meta?.scope ?? "workspace";
       let scopeLabel = scope;
-      if (created?.tenantId) scopeLabel += ` ${created.tenantId.slice(0, 8)}`;
+      if (meta?.tenantId) scopeLabel += ` ${meta.tenantId.slice(0, 8)}`;
       headerParts.push(scopeLabel);
 
       console.log(pc.bold(headerParts.join("   ")));
