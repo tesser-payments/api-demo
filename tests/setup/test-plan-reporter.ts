@@ -227,6 +227,28 @@ export default class TestPlanReporter {
     }
   }
 
+  onTestCaseResult(testCase: TestCaseLike): void {
+    // Per-test progress update — one row that mirrors the planned table.
+    // Fires right after the test finishes, regardless of pass/fail.
+    const fullName = testCase.fullName;
+    const modulePath = testCase.module?.relativeModuleId ?? "";
+    const planIdx = this.planned.findIndex(
+      (p) => p.fullName === fullName && p.module === modulePath,
+    );
+    const idx = planIdx >= 0 ? planIdx + 1 : 0;
+    const result = testCase.result ? testCase.result() : undefined;
+    const row = buildRowData(
+      { module: modulePath, fullName },
+      idx,
+      stateGlyph(result?.state),
+    );
+    const duration =
+      typeof result?.duration === "number"
+        ? pc.dim(` (${Math.round(result.duration / 1000)}s)`)
+        : "";
+    process.stderr.write(renderTableLine(row) + duration + "\n");
+  }
+
   onTestRunEnd(
     modules: ReadonlyArray<TestModuleLike>,
   ): void {

@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "demo": "bun run index.ts",
-    "test": "bash -c 'set -o pipefail; vitest run 2>&1 | grep -v \"^Sourcemap for \"'",
+    "test": "bash -c 'set -o pipefail; bun run scripts/run-tests-with-plan.ts 2>&1 | grep -v \"^Sourcemap for \"'",
     "test:watch": "vitest"
   },
   "devDependencies": {

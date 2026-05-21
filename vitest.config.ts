@@ -37,7 +37,13 @@ export default defineConfig(({ mode }) => {
       testTimeout: 300_000,
       globalSetup: ["./tests/setup/seed-and-summary.ts"],
       setupFiles: ["./tests/setup/suppress-sourcemap-warnings.ts"],
-      reporters: ["default", "./tests/setup/test-plan-reporter.ts"],
+      // The custom reporter is the only one. Drop "default" so the matrix
+      // (one row per how-to × provider × currency × network) stays the
+      // prominent thing in the log, not interleaved per-test stdout.
+      reporters: ["./tests/setup/test-plan-reporter.ts"],
+      // Hide example console.log during passing tests; on failure vitest
+      // still prints captured stdout so diagnostics stay accessible.
+      silent: "passed-only",
       sequence: {
         shuffle: {
           files: true,
