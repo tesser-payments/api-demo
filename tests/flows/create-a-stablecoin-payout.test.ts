@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect } from "vitest";
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../../src/client.ts";
@@ -14,37 +13,18 @@ import {
 } from "../../examples/create-a-stablecoin-payout.ts";
 import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
-import {
-  NETWORKS_FILE_PATH,
-  type NetworkInfo,
-} from "../setup/seed-and-summary.ts";
 import { flowTest } from "../flow-test.ts";
 
-// Resolve the supported networks at module load. globalSetup writes this
-// file before the test files load. Fallback to STELLAR if missing.
-function loadNetworks(): NetworkInfo[] {
-  if (!existsSync(NETWORKS_FILE_PATH)) {
-    return [{ key: "STELLAR" }];
-  }
-  try {
-    return JSON.parse(readFileSync(NETWORKS_FILE_PATH, "utf8")) as NetworkInfo[];
-  } catch {
-    return [{ key: "STELLAR" }];
-  }
-}
-
-const networks = loadNetworks();
-
-// Networks /v1/payments accepts. The /v1/networks endpoint can return values
-// (e.g. BASE) that the payments endpoint rejects with `payments-1001`. Update
-// when the platform reconciles the two lists.
-// See ~/.claude/projects/.../memory/project_networks_payments_mismatch.md
-const PAYMENTS_SUPPORTED_NETWORKS = new Set([
-  "POLYGON",
-  "STELLAR",
-  "ETHEREUM",
-  "SOLANA",
-]);
+// The /v1/networks endpoint is currently inaccurate (returns mainnet keys
+// like POLYGON when the sandbox is actually on Polygon Amoy testnet). Until
+// the endpoint is fixed, hardcode the testnet identifiers the sandbox
+// accepts. When /v1/networks reflects reality, switch back to fetching at
+// globalSetup time (see project_networks_payments_mismatch.md memory).
+const SANDBOX_NETWORKS: { key: string; name: string }[] = [
+  { key: "POLYGON_AMOY", name: "Polygon Amoy" },
+  { key: "BASE_SEPOLIA", name: "Base Sepolia" },
+  { key: "STELLAR", name: "Stellar" },
+];
 
 describe("create a stablecoin payout", () => {
   let sub: WebhookSubscription;
@@ -68,25 +48,12 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
-  const networksPlatformSupports = networks.filter((n) =>
-    PAYMENTS_SUPPORTED_NETWORKS.has(n.key),
-  );
-  const networksWithAddress = networksPlatformSupports.filter(
+  const networksWithAddress = SANDBOX_NETWORKS.filter(
     (n) => !!resolveWalletAddress(n.key),
   );
-
-  const skippedNotSupported = networks
-    .filter((n) => !PAYMENTS_SUPPORTED_NETWORKS.has(n.key))
-    .map((n) => n.key);
-  const skippedNoAddress = networksPlatformSupports
+  const skippedNoAddress = SANDBOX_NETWORKS
     .filter((n) => !resolveWalletAddress(n.key))
     .map((n) => n.key);
-  if (skippedNotSupported.length > 0) {
-    console.log(
-      `[payout] skipping networks /v1/payments doesn't accept: ${skippedNotSupported.join(", ")} ` +
-        `(returned by /v1/networks but rejected with payments-1001)`,
-    );
-  }
   if (skippedNoAddress.length > 0) {
     console.log(
       `[payout] skipping networks without configured wallet: ${skippedNoAddress.join(", ")} ` +

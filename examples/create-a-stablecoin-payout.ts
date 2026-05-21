@@ -69,12 +69,16 @@ export interface PaymentResponse {
 type AddressClass = "STELLAR" | "EVM";
 
 // EVM-compatible chains all share Ethereum-style 0x... addresses and use
-// the same `stablecoin_ethereum` account type. Add to this set when the
-// platform exposes a new EVM chain.
+// the same `stablecoin_ethereum` account type. Sandbox uses testnet
+// identifiers (POLYGON_AMOY, BASE_SEPOLIA, etc.) — add either mainnet or
+// testnet keys here as the platform exposes them.
 const EVM_NETWORKS = new Set([
   "ETHEREUM",
+  "ETHEREUM_SEPOLIA",
   "POLYGON",
+  "POLYGON_AMOY",
   "BASE",
+  "BASE_SEPOLIA",
   "AVALANCHE",
   "ARBITRUM",
   "OPTIMISM",
