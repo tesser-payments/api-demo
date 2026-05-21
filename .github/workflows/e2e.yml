@@ -13,17 +13,30 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - name: Run E2E
-        timeout-minutes: 30
-        run: bun run index.ts
+        # Each flow variant can take up to ~25 min on slow sandbox (deposit
+        # simulation duration). 4 deposit variants + payout, run serially,
+        # need ~2h in the worst case.
+        timeout-minutes: 150
+        run: bun run test
         env:
+          # Tesser auth + base URLs.
           TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.TESSER_AUTH_URL }}
+          # Webhook capture — sandbox is configured to POST to a webhook.site
+          # URL whose token + API key live in these secrets.
+          WEBHOOK_SITE_TOKEN: ${{ secrets.WEBHOOK_SITE_TOKEN }}
+          WEBHOOK_SITE_API_KEY: ${{ secrets.WEBHOOK_SITE_API_KEY }}
+          # Beneficiary wallet addresses, one per address class. Networks
+          # whose class has no address are skipped.
+          BENEFICIARY_WALLET_ADDRESS_STELLAR: ${{ secrets.BENEFICIARY_WALLET_ADDRESS_STELLAR }}
+          BENEFICIARY_WALLET_ADDRESS_EVM: ${{ secrets.BENEFICIARY_WALLET_ADDRESS_EVM }}
+          # Legacy Stellar fallback (used if *_STELLAR is unset).
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
-          ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
-          DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
+          # Circle Mint sandbox API key (stored in Tesser vault on first run).
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
       - name: Notify Slack on failure
         if: failure()
         uses: slackapi/slack-github-action@v2

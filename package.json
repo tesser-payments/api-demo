@@ -1,10 +1,8 @@
 {
   "name": "api-demo",
-  "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "demo": "bun run index.ts",
     "test": "bash -c 'set -o pipefail; bun run scripts/run-tests-with-plan.ts 2>&1 | grep -v \"^Sourcemap for \"'",
     "test:watch": "vitest"
   },
