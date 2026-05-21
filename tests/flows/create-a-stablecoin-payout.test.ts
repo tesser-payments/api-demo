@@ -99,13 +99,6 @@ describe("create a stablecoin payout", () => {
         });
         let ledgerAccountId: string;
         if (existing) {
-          sharedState.markReused(
-            `payout / Circle / ${network.key}`,
-            "ledger",
-            existing.id,
-            `originally from ${existing.createdBy}`,
-            { provider: "CIRCLE_MINT", currency: "USDC", network: network.key },
-          );
           ledgerAccountId = existing.id;
         } else {
           const funded = await deposit({ depositAmount: "100.00" });
@@ -115,9 +108,15 @@ describe("create a stablecoin payout", () => {
               provider: "CIRCLE_MINT",
               currency: "USDC",
               hasBalance: true,
+              counterpartyId: funded.counterpartyId ?? undefined,
               createdBy: `payout / Circle / ${network.key} (inline fund)`,
             },
             `deposit ${funded.depositId}`,
+            {
+              operationKind: "deposit",
+              operationId: funded.depositId,
+              operationSummary: "100 USD → USDC",
+            },
           );
           ledgerAccountId = funded.ledgerAccountId;
         }
@@ -127,6 +126,23 @@ describe("create a stablecoin payout", () => {
           amount: "0.01",
           network: network.key,
         });
+
+        if (existing) {
+          sharedState.markReused(
+            `payout / Circle / ${network.key}`,
+            "ledger",
+            existing.id,
+            undefined,
+            {
+              provider: "CIRCLE_MINT",
+              currency: "USDC",
+              network: network.key,
+              operationKind: "payment",
+              operationId: result.paymentId,
+              operationSummary: `0.01 USDC → ${network.key} wallet`,
+            },
+          );
+        }
 
         const events = await sub.scopedTo(result.paymentId).collectAll({
           expectedTypes: EXPECTED_STABLECOIN_PAYOUT.types,

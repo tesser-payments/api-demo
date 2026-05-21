@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pc from "picocolors";
 import { loadEnv } from "vite";
@@ -28,11 +28,13 @@ export default async function setup() {
     if (process.env[k] === undefined) process.env[k] = v;
   }
 
-  // Truncate any previous shared-state action log.
+  // Atomically truncate the action log so previous runs don't bleed in.
+  // Use writeFileSync rather than unlinkSync because unlinkSync can fail
+  // silently if a stale process still holds the inode.
   try {
-    if (existsSync(SHARED_STATE_LOG_PATH)) unlinkSync(SHARED_STATE_LOG_PATH);
+    writeFileSync(SHARED_STATE_LOG_PATH, "");
   } catch {
-    // Non-fatal.
+    // Non-fatal — the log just gets appended-to.
   }
 
   // Fetch supported networks once for parameterized flow tests.
@@ -88,34 +90,36 @@ export default async function setup() {
       byId.get(a.id)!.push(a);
     }
 
-    console.log("\n" + pc.bold(pc.cyan("== Shared-state resource lifecycle ==")));
+    console.log("\n" + pc.bold(pc.cyan("== Resources used ==")));
     console.log("");
 
     for (const [id, entries] of byId) {
       const shortId = id.slice(0, 8);
       const created = entries.find((e) => e.action === "CREATED");
 
-      // Build resource label annotation from the CREATED entry's metadata.
-      let annotation = "";
-      if (created) {
-        const parts: string[] = [];
-        if (created.provider) parts.push(created.provider);
-        if (created.currency) parts.push(created.currency);
-        if (created.tenantId) parts.push(`under tenant ${created.tenantId.slice(0, 8)}`);
-        if (parts.length > 0) annotation = `  (${parts.join(" ")})`;
-      }
-
+      // Build resource header: kind + short id + provider/currency + scope (+ tenant id if scoped)
       const kind = entries[0]?.kind ?? "resource";
-      console.log(pc.bold(`${kind} ${shortId}${annotation}`));
+      const headerParts: string[] = [`${kind} ${shortId}`];
+      if (created?.provider || created?.currency) {
+        const meta: string[] = [];
+        if (created.provider) meta.push(created.provider);
+        if (created.currency) meta.push(created.currency);
+        headerParts.push(meta.join(" "));
+      }
+      const scope = created?.scope ?? "workspace";
+      let scopeLabel = scope;
+      if (created?.tenantId) scopeLabel += ` ${created.tenantId.slice(0, 8)}`;
+      headerParts.push(scopeLabel);
 
-      const lastIdx = entries.length - 1;
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i]!;
-        const isLast = i === lastIdx;
-        const prefix = isLast ? "  └─" : "  ├─";
+      console.log(pc.bold(headerParts.join("   ")));
+
+      for (const e of entries) {
         const color = e.action === "CREATED" ? pc.green : pc.yellow;
-        const det = e.detail ? pc.dim(` (${e.detail})`) : "";
-        console.log(`${prefix} ${color(e.action.padEnd(7))} by ${e.test}${det}`);
+        console.log(`  ${color(e.action.padEnd(7))}  ${e.test}`);
+        if (e.operationKind && e.operationId) {
+          const summary = e.operationSummary ? `: ${e.operationSummary}` : "";
+          console.log(`           → ${e.operationKind} ${e.operationId.slice(0, 8)}${summary}`);
+        }
       }
       console.log("");
     }
