@@ -113,12 +113,24 @@ export async function run(input: DepositLpInput): Promise<DepositLpResult> {
     }
 
     // 4. Create a Circle Mint ledger account.
+    // Platform constraint: the ledger payload must carry EXACTLY ONE of
+    // counterparty_id or tenant_id (workspace-only and both-at-once are
+    // both rejected — accounts-3006 / accounts-3000). When a counterparty
+    // exists, the ledger inherits tenant scope through the counterparty.
     const ledgerPayload: Record<string, unknown> = {
       name: `${customerName}'s Ledger`,
       provider: "CIRCLE_MINT",
     };
-    if (counterpartyId) ledgerPayload.counterparty_id = counterpartyId;
-    if (input.tenantId) ledgerPayload.tenant_id = input.tenantId;
+    if (counterpartyId) {
+      ledgerPayload.counterparty_id = counterpartyId;
+    } else if (input.tenantId) {
+      ledgerPayload.tenant_id = input.tenantId;
+    } else {
+      throw new Error(
+        "Circle Mint ledgers require a tenant or a counterparty. " +
+          "Pass tenantId, set withCounterparty true (default), or both.",
+      );
+    }
     const ledger = await post<{ data: { id: string } }>(
       "/v1/accounts/ledgers",
       ledgerPayload,

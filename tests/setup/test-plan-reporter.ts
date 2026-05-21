@@ -154,6 +154,15 @@ export default class TestPlanReporter {
       process.stderr.write(
         renderFlowRow(variant, state, duration) + "\n",
       );
+      if (state === "failed" || state === "fail") {
+        for (const e of result?.errors ?? []) {
+          if (e.message) {
+            process.stderr.write(
+              pc.red(`         ↳ ${e.message.split("\n")[0]}\n`),
+            );
+          }
+        }
+      }
     } else {
       // Unit test — count, no per-test echo
       if (state === "passed" || state === "pass") this.unitPassed += 1;

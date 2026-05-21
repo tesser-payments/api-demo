@@ -11,15 +11,26 @@ import { EXPECTED_DEPOSIT_LP } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
 import { flowTest } from "../flow-test.ts";
 
+// The platform requires a Circle Mint ledger to carry exactly one of
+// tenant_id or counterparty_id (workspace-only and both-at-once are both
+// rejected; see memory project_ledger_ownership_constraints.md). When a
+// counterparty is tenant-scoped, the ledger inherits tenant scope through
+// it — the ledger payload only ever names the counterparty.
+//
+// Three valid variants:
+//   - counterparty            : ledger ← counterparty (no tenant anywhere)
+//   - tenant                  : ledger ← tenant (no counterparty)
+//   - counterparty-in-tenant  : ledger ← counterparty ← tenant (counterparty
+//                               itself is tenant-scoped, ledger only carries
+//                               counterparty_id)
 const VARIANTS: Array<{
   label: string;
   withCounterparty: boolean;
   withTenant: boolean;
 }> = [
-  { label: "workspace", withCounterparty: false, withTenant: false },
-  { label: "workspace+counterparty", withCounterparty: true, withTenant: false },
+  { label: "counterparty", withCounterparty: true, withTenant: false },
   { label: "tenant", withCounterparty: false, withTenant: true },
-  { label: "tenant+counterparty", withCounterparty: true, withTenant: true },
+  { label: "counterparty-in-tenant", withCounterparty: true, withTenant: true },
 ];
 
 describe("deposit funds via a liquidity provider (Circle Mint)", () => {
