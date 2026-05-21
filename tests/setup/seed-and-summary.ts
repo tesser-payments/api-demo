@@ -70,19 +70,54 @@ export default async function setup() {
       console.log(pc.dim("\n(no shared-state actions recorded)\n"));
       return;
     }
-    console.log("\n" + pc.bold(pc.cyan("== Shared-state action log ==")));
+
+    // Parse all actions.
+    const actions: SharedAction[] = [];
     for (const line of lines) {
       try {
-        const a = JSON.parse(line) as SharedAction;
-        const color = a.action === "CREATED" ? pc.green : pc.yellow;
-        const det = a.detail ? ` (${a.detail})` : "";
-        console.log(
-          `  ${color(a.action.padEnd(7))} ${a.kind.padEnd(8)} ${a.id}${det}  ${pc.dim("[" + a.test + "]")}`,
-        );
+        actions.push(JSON.parse(line) as SharedAction);
       } catch {
         // skip unparseable lines
       }
     }
+
+    // Group by resource id, preserving insertion order.
+    const byId = new Map<string, SharedAction[]>();
+    for (const a of actions) {
+      if (!byId.has(a.id)) byId.set(a.id, []);
+      byId.get(a.id)!.push(a);
+    }
+
+    console.log("\n" + pc.bold(pc.cyan("== Shared-state resource lifecycle ==")));
     console.log("");
+
+    for (const [id, entries] of byId) {
+      const shortId = id.slice(0, 8);
+      const created = entries.find((e) => e.action === "CREATED");
+
+      // Build resource label annotation from the CREATED entry's metadata.
+      let annotation = "";
+      if (created) {
+        const parts: string[] = [];
+        if (created.provider) parts.push(created.provider);
+        if (created.currency) parts.push(created.currency);
+        if (created.tenantId) parts.push(`under tenant ${created.tenantId.slice(0, 8)}`);
+        if (parts.length > 0) annotation = `  (${parts.join(" ")})`;
+      }
+
+      const kind = entries[0]?.kind ?? "resource";
+      console.log(pc.bold(`${kind} ${shortId}${annotation}`));
+
+      const lastIdx = entries.length - 1;
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]!;
+        const isLast = i === lastIdx;
+        const prefix = isLast ? "  └─" : "  ├─";
+        const color = e.action === "CREATED" ? pc.green : pc.yellow;
+        const det = e.detail ? pc.dim(` (${e.detail})`) : "";
+        console.log(`${prefix} ${color(e.action.padEnd(7))} by ${e.test}${det}`);
+      }
+      console.log("");
+    }
   };
 }

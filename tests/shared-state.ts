@@ -25,6 +25,11 @@ export interface SharedAction {
   kind: string;
   id: string;
   detail?: string;
+  // Structured fields for tree-grouped output
+  provider?: string;
+  currency?: string;
+  network?: string;
+  tenantId?: string;
 }
 
 // Path of the JSON-lines action log. Both the in-worker singleton and the
@@ -51,15 +56,19 @@ class SharedState {
 
   registerLedger(ledger: SharedLedger, detail?: string): SharedLedger {
     this.ledgers.push(ledger);
-    this.recordAction(ledger.createdBy, "CREATED", "ledger", ledger.id, detail);
+    this.recordAction(ledger.createdBy, "CREATED", "ledger", ledger.id, detail, {
+      provider: ledger.provider,
+      currency: ledger.currency,
+      tenantId: ledger.tenantId,
+    });
     return ledger;
   }
 
-  markReused(test: string, kind: string, id: string, detail?: string): void {
-    this.recordAction(test, "REUSED", kind, id, detail);
+  markReused(test: string, kind: string, id: string, detail?: string, extras?: Partial<SharedAction>): void {
+    this.recordAction(test, "REUSED", kind, id, detail, extras);
   }
 
-  recordAction(test: string, action: "CREATED" | "REUSED", kind: string, id: string, detail?: string): void {
+  recordAction(test: string, action: "CREATED" | "REUSED", kind: string, id: string, detail?: string, extras?: Partial<SharedAction>): void {
     const entry: SharedAction = {
       ts: new Date().toISOString(),
       test,
@@ -67,6 +76,7 @@ class SharedState {
       kind,
       id,
       detail,
+      ...extras,
     };
 
     // Persist to a shared file so the main-process teardown can summarize.

@@ -1,4 +1,5 @@
 import pc from "picocolors";
+import { getFlowVariant, getDocSlug } from "../flow-test.ts";
 
 // Vitest 4 reporter API. We use:
 //   - onTestRunStart(specs)       — captures total module count
@@ -36,6 +37,27 @@ interface TestModuleLike {
   children: TestCollectionLike;
 }
 
+// Column widths (content width, not including separator spaces)
+const COL = {
+  idx: 3,
+  result: 7,
+  doc: 32,
+  provider: 11,
+  currency: 8,
+  network: 9,
+  // description: rest of line, no truncation
+};
+
+function trunc(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
+function pad(s: string, width: number, right = false): string {
+  if (right) return s.padStart(width);
+  return s.padEnd(width);
+}
+
 function stateGlyph(state: string | undefined): string {
   switch (state) {
     case "passed":
@@ -52,6 +74,93 @@ function stateGlyph(state: string | undefined): string {
     default:
       return pc.dim("·");
   }
+}
+
+interface RowData {
+  idx: string;
+  result: string;  // glyph (may contain ANSI)
+  doc: string;
+  provider: string;
+  currency: string;
+  network: string;
+  description: string;
+}
+
+function buildRowData(planned: PlannedTest, idx: number, result?: string): RowData {
+  const variant = getFlowVariant(planned.fullName);
+
+  let doc: string;
+  let provider: string;
+  let currency: string;
+  let network: string;
+  let description: string;
+
+  if (variant) {
+    doc = trunc(getDocSlug(variant.docUrl), COL.doc);
+    provider = trunc(variant.provider ?? "", COL.provider);
+    currency = trunc(variant.currency ?? "", COL.currency);
+    network = trunc(variant.network ?? "", COL.network);
+    // description is the last segment after the final " | "
+    const lastPipe = planned.fullName.lastIndexOf(" | ");
+    description = lastPipe >= 0 ? planned.fullName.slice(lastPipe + 3) : planned.fullName;
+  } else {
+    // Unit test: use the module path as doc, test name as description
+    doc = trunc(planned.module, COL.doc);
+    provider = "";
+    currency = "";
+    network = "";
+    description = planned.fullName;
+  }
+
+  return {
+    idx: pad(String(idx), COL.idx, true),
+    result: result ?? pc.dim("·"),
+    doc: pad(doc, COL.doc),
+    provider: pad(provider, COL.provider),
+    currency: pad(currency, COL.currency),
+    network: pad(network, COL.network),
+    description,
+  };
+}
+
+function renderHeader(): string {
+  const h = {
+    idx: pad("#", COL.idx, true),
+    result: pad("Result", COL.result),
+    doc: pad("Doc", COL.doc),
+    provider: pad("Provider", COL.provider),
+    currency: pad("Currency", COL.currency),
+    network: pad("Network", COL.network),
+    description: "Description",
+  };
+  return (
+    `${h.idx}  ${h.result}  ${h.doc}  ${h.provider}  ${h.currency}  ${h.network}  ${h.description}`
+  );
+}
+
+function renderDivider(): string {
+  return (
+    `${"-".repeat(COL.idx)}  ${"-".repeat(COL.result)}  ${"-".repeat(COL.doc)}  ` +
+    `${"-".repeat(COL.provider)}  ${"-".repeat(COL.currency)}  ${"-".repeat(COL.network)}  ${"-".repeat(28)}`
+  );
+}
+
+function renderRow(row: RowData): string {
+  return (
+    `${row.idx}  ${row.result}       ${row.doc}  ${row.provider}  ${row.currency}  ${row.network}  ${row.description}`
+  );
+}
+
+// The result column is a single glyph char (+ ANSI). We use 7-wide "Result"
+// header but the glyph only needs 1 visible char. We pad with spaces to fill
+// the visual gap in the row renderer above (using fixed spacing).
+// Simpler: just build the line as a joined string.
+function renderTableLine(row: RowData): string {
+  // idx: right-aligned 3 chars | 2 spaces | glyph (1 visible, but ANSI-wrapped) | 7 spaces to fill result col | doc | ...
+  // We keep it simple: the result glyph is 1 char wide visually. The header
+  // "Result" is 6 chars. We align by putting the glyph then enough spaces.
+  const resultPad = " ".repeat(COL.result - 1); // 6 spaces after the 1-char glyph
+  return `${row.idx}  ${row.result}${resultPad}  ${row.doc}  ${row.provider}  ${row.currency}  ${row.network}  ${row.description}`;
 }
 
 export default class TestPlanReporter {
@@ -89,15 +198,26 @@ export default class TestPlanReporter {
     this.printOutcomes();
   }
 
+  private printTable(title: string, rows: RowData[]): void {
+    if (rows.length === 0) return;
+    const header = pc.bold(pc.cyan(`== ${title} ==`));
+    const lines = [
+      "",
+      header,
+      renderHeader(),
+      renderDivider(),
+      ...rows.map(renderTableLine),
+      "",
+    ];
+    process.stderr.write(lines.join("\n") + "\n");
+  }
+
   private printPlan(): void {
     if (this.planned.length === 0) return;
-    const header = pc.bold(pc.cyan("== Planned test order =="));
-    const lines = this.planned.map((t, i) => {
-      const idx = String(i + 1).padStart(2);
-      return `  ${idx}. ${pc.dim(t.module)}  ${t.fullName}`;
-    });
-    process.stderr.write("\n" + header + "\n");
-    process.stderr.write(lines.join("\n") + "\n\n");
+    const rows = this.planned.map((t, i) =>
+      buildRowData(t, i + 1, pc.dim("·")),
+    );
+    this.printTable("Planned test order", rows);
   }
 
   private findTestResult(fullName: string, moduleId: string): TestRunResult | undefined {
@@ -115,20 +235,10 @@ export default class TestPlanReporter {
 
   private printOutcomes(): void {
     if (this.planned.length === 0) return;
-    const header = pc.bold(
-      pc.cyan("== Final test outcomes (planned order) =="),
-    );
-    const lines = this.planned.map((t, i) => {
+    const rows = this.planned.map((t, i) => {
       const result = this.findTestResult(t.fullName, t.module);
-      const state = result?.state;
-      const duration =
-        typeof result?.duration === "number"
-          ? pc.dim(` (${Math.round(result.duration)}ms)`)
-          : "";
-      const idx = String(i + 1).padStart(2);
-      return `  ${idx}. ${stateGlyph(state)} ${pc.dim(t.module)}  ${t.fullName}${duration}`;
+      return buildRowData(t, i + 1, stateGlyph(result?.state));
     });
-    process.stderr.write("\n" + header + "\n");
-    process.stderr.write(lines.join("\n") + "\n\n");
+    this.printTable("Final test outcomes (planned order)", rows);
   }
 }

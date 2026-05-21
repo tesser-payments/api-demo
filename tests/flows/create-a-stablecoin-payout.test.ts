@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect } from "vitest";
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../../src/client.ts";
 import {
@@ -10,6 +10,7 @@ import { run as deposit } from "../../examples/deposit-funds-via-a-liquidity-pro
 import {
   resolveWalletAddress,
   run as payout,
+  meta as payoutMeta,
 } from "../../examples/create-a-stablecoin-payout.ts";
 import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
@@ -17,6 +18,7 @@ import {
   NETWORKS_FILE_PATH,
   type NetworkInfo,
 } from "../setup/seed-and-summary.ts";
+import { flowTest } from "../flow-test.ts";
 
 // Resolve the supported networks at module load. globalSetup writes this
 // file before the test files load. Fallback to STELLAR if missing.
@@ -92,60 +94,69 @@ describe("create a stablecoin payout", () => {
     );
   }
 
-  test.each(networksWithAddress)(
-    "emits expected event sequence on '$key'",
-    async (network) => {
-      // Reuse a funded ledger if one exists, else fund a fresh one and
-      // register it for downstream reuse by the deposit-via-LP test.
-      const existing = sharedState.findFundedLedger({
+  for (const network of networksWithAddress) {
+    flowTest(
+      {
+        docUrl: payoutMeta.docUrl,
         provider: "CIRCLE_MINT",
         currency: "USDC",
-      });
-      let ledgerAccountId: string;
-      if (existing) {
-        sharedState.markReused(
-          `payout / Circle / ${network.key}`,
-          "ledger",
-          existing.id,
-          `originally from ${existing.createdBy}`,
-        );
-        ledgerAccountId = existing.id;
-      } else {
-        const funded = await deposit({ depositAmount: "100.00" });
-        sharedState.registerLedger(
-          {
-            id: funded.ledgerAccountId,
-            provider: "CIRCLE_MINT",
-            currency: "USDC",
-            hasBalance: true,
-            createdBy: `payout / Circle / ${network.key} (inline fund)`,
-          },
-          `deposit ${funded.depositId}`,
-        );
-        ledgerAccountId = funded.ledgerAccountId;
-      }
-
-      const result = await payout({
-        ledgerAccountId,
-        amount: "0.01",
         network: network.key,
-      });
+      },
+      "emits expected events",
+      async () => {
+        // Reuse a funded ledger if one exists, else fund a fresh one and
+        // register it for downstream reuse by the deposit-via-LP test.
+        const existing = sharedState.findFundedLedger({
+          provider: "CIRCLE_MINT",
+          currency: "USDC",
+        });
+        let ledgerAccountId: string;
+        if (existing) {
+          sharedState.markReused(
+            `payout / Circle / ${network.key}`,
+            "ledger",
+            existing.id,
+            `originally from ${existing.createdBy}`,
+            { provider: "CIRCLE_MINT", currency: "USDC", network: network.key },
+          );
+          ledgerAccountId = existing.id;
+        } else {
+          const funded = await deposit({ depositAmount: "100.00" });
+          sharedState.registerLedger(
+            {
+              id: funded.ledgerAccountId,
+              provider: "CIRCLE_MINT",
+              currency: "USDC",
+              hasBalance: true,
+              createdBy: `payout / Circle / ${network.key} (inline fund)`,
+            },
+            `deposit ${funded.depositId}`,
+          );
+          ledgerAccountId = funded.ledgerAccountId;
+        }
 
-      const events = await sub.scopedTo(result.paymentId).collectAll({
-        expectedTypes: EXPECTED_STABLECOIN_PAYOUT.types,
-        timeoutMs: 10 * 60 * 1000,
-      });
+        const result = await payout({
+          ledgerAccountId,
+          amount: "0.01",
+          network: network.key,
+        });
 
-      expect(events.map((e) => e.type)).toEqual([
-        ...EXPECTED_STABLECOIN_PAYOUT.types,
-      ]);
-      expect(events.filter((e) => !e.signatureValid)).toEqual([]);
-      expect(result.payment.desired).toMatchObject(
-        EXPECTED_STABLECOIN_PAYOUT.terminal.desired,
-      );
-      expect(result.payment.estimated).toBeDefined();
-      expect(result.payment.actual?.to?.amount).toBeDefined();
-    },
-    90 * 60 * 1000,
-  );
+        const events = await sub.scopedTo(result.paymentId).collectAll({
+          expectedTypes: EXPECTED_STABLECOIN_PAYOUT.types,
+          timeoutMs: 10 * 60 * 1000,
+        });
+
+        expect(events.map((e) => e.type)).toEqual([
+          ...EXPECTED_STABLECOIN_PAYOUT.types,
+        ]);
+        expect(events.filter((e) => !e.signatureValid)).toEqual([]);
+        expect(result.payment.desired).toMatchObject(
+          EXPECTED_STABLECOIN_PAYOUT.terminal.desired,
+        );
+        expect(result.payment.estimated).toBeDefined();
+        expect(result.payment.actual?.to?.amount).toBeDefined();
+      },
+      90 * 60 * 1000,
+    );
+  }
 });

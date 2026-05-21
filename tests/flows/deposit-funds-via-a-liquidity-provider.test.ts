@@ -1,14 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect } from "vitest";
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../../src/client.ts";
 import {
   subscribeToWebhooks,
   type WebhookSubscription,
 } from "../../src/webhooks.ts";
-import { run } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
+import { run, meta as depositMeta } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
 import { run as createTenant } from "../../examples/create-a-tenant.ts";
 import { EXPECTED_DEPOSIT_LP } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
+import { flowTest } from "../flow-test.ts";
 
 describe("deposit funds via a liquidity provider (Circle Mint)", () => {
   let sub: WebhookSubscription;
@@ -32,8 +33,13 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
     sub?.stop();
   });
 
-  test(
-    "emits expected event sequence and progresses DEA overlays",
+  flowTest(
+    {
+      docUrl: depositMeta.docUrl,
+      provider: "CIRCLE_MINT",
+      currency: "USDC",
+    },
+    "emits expected events (org-level)",
     async () => {
       const existing = sharedState.findFundedLedger({
         provider: "CIRCLE_MINT",
@@ -49,6 +55,7 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
           "ledger",
           existing.id,
           `originally from ${existing.createdBy}, deposit ${result.depositId}`,
+          { provider: "CIRCLE_MINT", currency: "USDC" },
         );
       } else {
         sharedState.registerLedger(
@@ -84,8 +91,13 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
     60 * 60 * 1000,
   );
 
-  test(
-    "deposit succeeds under a tenant",
+  flowTest(
+    {
+      docUrl: depositMeta.docUrl,
+      provider: "CIRCLE_MINT",
+      currency: "USDC",
+    },
+    "emits expected events (tenant)",
     async () => {
       const tenant = await createTenant({});
 
