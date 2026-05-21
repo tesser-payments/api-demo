@@ -11,23 +11,25 @@ import { EXPECTED_DEPOSIT_LP } from "../helpers/expected-events.ts";
 import { sharedState } from "../shared-state.ts";
 import { flowTest } from "../flow-test.ts";
 
-// The platform requires a Circle Mint ledger to carry exactly one of
-// tenant_id or counterparty_id (workspace-only and both-at-once are both
-// rejected; see memory project_ledger_ownership_constraints.md). When a
-// counterparty is tenant-scoped, the ledger inherits tenant scope through
-// it — the ledger payload only ever names the counterparty.
-//
-// Three valid variants:
-//   - counterparty            : ledger ← counterparty (no tenant anywhere)
-//   - tenant                  : ledger ← tenant (no counterparty)
-//   - counterparty-in-tenant  : ledger ← counterparty ← tenant (counterparty
-//                               itself is tenant-scoped, ledger only carries
-//                               counterparty_id)
+// Four account-ownership scenarios for the deposit destination ledger.
+// Circle Mint currently rejects the "workspace" combination at the API
+// (accounts-3006: ledgers need exactly one of tenant/counterparty). We
+// keep the variant in the matrix so its absence is visible; the test
+// detects the platform reject and marks itself as skipped rather than
+// failing. See memory project_ledger_ownership_constraints.md.
 const VARIANTS: Array<{
   label: string;
   withCounterparty: boolean;
   withTenant: boolean;
+  /** Platform-reject code that, if observed, marks this variant as skip. */
+  platformRejectCode?: string;
 }> = [
+  {
+    label: "workspace",
+    withCounterparty: false,
+    withTenant: false,
+    platformRejectCode: "accounts-3006",
+  },
   { label: "counterparty", withCounterparty: true, withTenant: false },
   { label: "tenant", withCounterparty: false, withTenant: true },
   { label: "counterparty-in-tenant", withCounterparty: true, withTenant: true },
@@ -63,17 +65,32 @@ describe("deposit funds via a liquidity provider (Circle Mint)", () => {
         currency: "USDC",
       },
       `emits expected events (${v.label})`,
-      async () => {
+      async (ctx) => {
         let tenantId: string | undefined;
         if (v.withTenant) {
           const tenant = await createTenant({});
           tenantId = tenant.tenantId;
         }
-        const result = await deposit({
-          depositAmount: "100.00",
-          withCounterparty: v.withCounterparty,
-          tenantId,
-        });
+        let result;
+        try {
+          result = await deposit({
+            depositAmount: "100.00",
+            withCounterparty: v.withCounterparty,
+            tenantId,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            v.platformRejectCode &&
+            msg.includes(v.platformRejectCode)
+          ) {
+            ctx.skip(
+              `platform rejects (${v.platformRejectCode}): ` +
+                `Circle Mint requires either tenant or counterparty`,
+            );
+          }
+          throw err;
+        }
         sharedState.registerLedger(
           {
             id: result.ledgerAccountId,

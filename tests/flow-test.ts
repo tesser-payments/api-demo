@@ -34,18 +34,25 @@ function buildName(variant: FlowVariant, description: string): string {
   return parts.join(" | ");
 }
 
+// The fn receives vitest's test context (so callers can `ctx.skip()`
+// at runtime to mark a variant as skipped — e.g., when the platform
+// doesn't support a known-listed combination).
+export interface FlowTestContext {
+  skip: (reason?: string) => void;
+}
+
 export function flowTest(
   variant: FlowVariant,
   description: string,
-  fn: () => Promise<void> | void,
+  fn: (ctx: FlowTestContext) => Promise<void> | void,
   timeoutMs?: number,
 ): void {
   const name = buildName(variant, description);
   VARIANTS.set(name, variant);
   if (timeoutMs !== undefined) {
-    test(name, fn, timeoutMs);
+    test(name, fn as Parameters<typeof test>[1], timeoutMs);
   } else {
-    test(name, fn);
+    test(name, fn as Parameters<typeof test>[1]);
   }
 }
 
