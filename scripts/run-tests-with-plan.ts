@@ -1,10 +1,11 @@
-// Wraps `vitest run` with a pre-pass that prints the planned test order
-// at the top of the log. Vitest 4 interleaves test collection with test
-// execution, so a reporter can't print "all planned tests" before any
-// have started running. Instead, we run `vitest list` first (same seed),
-// format its output, print as a column table, then invoke `vitest run`.
+// Wraps `vitest run` with a pre-pass that prints the planned flow-test
+// combos (one row per how-to × provider × currency × network) at the top
+// of the log. Vitest 4 collects+runs interleaved, so a reporter alone
+// can't print the plan before any test starts.
 //
-// Used by `bun run test`. Strips sourcemap warnings from both passes.
+// We use `vitest list` to enumerate, filter to flow tests (which carry
+// the structured metadata in their name), and render as a matrix.
+// Unit-test count is shown as a single line.
 
 import { spawn, spawnSync } from "node:child_process";
 import pc from "picocolors";
@@ -12,15 +13,12 @@ import pc from "picocolors";
 const SEED = process.env.VITEST_SEED ?? String(Date.now());
 process.env.VITEST_SEED = SEED;
 
-// Column widths — match tests/setup/test-plan-reporter.ts so the planned
-// panel here lines up with the final outcomes panel printed at run end.
 const COL = {
-  idx: 3,
-  result: 7,
-  doc: 32,
-  provider: 11,
-  currency: 8,
-  network: 9,
+  doc: 38,
+  provider: 12,
+  currency: 9,
+  network: 14,
+  description: 32,
 };
 
 interface ParsedVariant {
@@ -54,14 +52,24 @@ function trunc(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
 
-function pad(s: string, width: number, right = false): string {
-  return right ? s.padStart(width) : s.padEnd(width);
+function pad(s: string, w: number): string {
+  return s.padEnd(w);
 }
 
-function renderHeader(): string {
+function renderFlowRow(v: ParsedVariant, prefix = "  ·  "): string {
   return [
-    pad("#", COL.idx, true),
-    pad("Result", COL.result),
+    prefix,
+    pad(trunc(v.docSlug, COL.doc), COL.doc),
+    pad(trunc(v.provider ?? "-", COL.provider), COL.provider),
+    pad(trunc(v.currency ?? "-", COL.currency), COL.currency),
+    pad(trunc(v.network ?? "-", COL.network), COL.network),
+    v.description,
+  ].join("  ");
+}
+
+function renderFlowHeader(): string {
+  return [
+    "     ", // align with " ·  " prefix
     pad("Doc", COL.doc),
     pad("Provider", COL.provider),
     pad("Currency", COL.currency),
@@ -72,84 +80,67 @@ function renderHeader(): string {
 
 function renderDivider(): string {
   return [
-    "-".repeat(COL.idx),
-    "-".repeat(COL.result),
+    "-----",
     "-".repeat(COL.doc),
     "-".repeat(COL.provider),
     "-".repeat(COL.currency),
     "-".repeat(COL.network),
-    "-".repeat(28),
+    "-".repeat(COL.description),
   ].join("  ");
 }
 
-function renderRow(
-  idx: number,
-  fullName: string,
-  modulePath: string,
-): string {
-  const trailing = fullName.split(" > ").pop() ?? fullName;
-  const v = parseVariantFromName(trailing);
-  let doc: string, provider: string, currency: string, network: string, description: string;
-  if (v) {
-    doc = trunc(v.docSlug, COL.doc);
-    provider = trunc(v.provider ?? "", COL.provider);
-    currency = trunc(v.currency ?? "", COL.currency);
-    network = trunc(v.network ?? "", COL.network);
-    description = v.description;
-  } else {
-    doc = trunc(modulePath, COL.doc);
-    provider = "";
-    currency = "";
-    network = "";
-    description = fullName;
-  }
-  return [
-    pad(String(idx), COL.idx, true),
-    pad(pc.dim("·"), COL.result + pc.dim("·").length - 1),
-    pad(doc, COL.doc),
-    pad(provider, COL.provider),
-    pad(currency, COL.currency),
-    pad(network, COL.network),
-    description,
-  ].join("  ");
-}
-
-// Step 1: run `vitest list` to get planned tests in seed-shuffled order.
+// Run `vitest list` (same seed, same shuffle config) to enumerate tests.
 const list = spawnSync("bunx", ["vitest", "list"], { encoding: "utf8" });
-
 if (list.status !== 0) {
   console.error("vitest list failed");
   if (list.stderr) console.error(list.stderr);
   process.exit(list.status ?? 1);
 }
 
-// Each line: "<modulepath> > <fullName>"
-const stripAnsi = (s: string) => s.replace(/\[[0-9;]*m/g, "");
-const planned = (list.stdout + (list.stderr ?? ""))
+const stripAnsi = (s: string) => s.replace(/\[[0-9;]*m/g, "");
+const lines = (list.stdout + (list.stderr ?? ""))
   .split("\n")
   .map(stripAnsi)
   .filter((line) => line.includes(".test.ts >"));
 
-const rows = planned.map((line) => {
-  const firstSep = line.indexOf(" > ");
-  const modulePath = firstSep > 0 ? line.slice(0, firstSep) : line;
-  const fullName = firstSep > 0 ? line.slice(firstSep + 3) : line;
-  return { modulePath, fullName };
+interface ListedTest {
+  modulePath: string;
+  fullName: string;
+  variant?: ParsedVariant;
+}
+
+const listed: ListedTest[] = lines.map((line) => {
+  const sep = line.indexOf(" > ");
+  const modulePath = sep > 0 ? line.slice(0, sep) : line;
+  const rest = sep > 0 ? line.slice(sep + 3) : line;
+  const trailing = rest.split(" > ").pop() ?? rest;
+  return { modulePath, fullName: rest, variant: parseVariantFromName(trailing) };
 });
 
+const flow = listed.filter((t) => t.variant);
+const unitCount = listed.length - flow.length;
+
 console.log("");
-console.log(pc.bold(pc.cyan(`== Planned test order (VITEST_SEED=${SEED}) ==`)));
-console.log(renderHeader());
-console.log(renderDivider());
-for (let i = 0; i < rows.length; i++) {
-  console.log(renderRow(i + 1, rows[i]!.fullName, rows[i]!.modulePath));
+console.log(pc.bold(pc.cyan(`== Tests planned  (VITEST_SEED=${SEED}) ==`)));
+console.log("");
+if (flow.length > 0) {
+  console.log(pc.bold(`Flow tests (${flow.length}, run in random order):`));
+  console.log(renderFlowHeader());
+  console.log(renderDivider());
+  for (const t of flow) {
+    console.log(renderFlowRow(t.variant!));
+  }
+  console.log("");
 }
-console.log("");
+if (unitCount > 0) {
+  console.log(pc.dim(`Unit tests: ${unitCount}`));
+  console.log("");
+}
 console.log(
   pc.dim(`(re-run with VITEST_SEED=${SEED} bun run test to reproduce order)`),
 );
 console.log("");
 
-// Step 2: execute the actual run, inheriting stdio so streaming output works.
+// Now run.
 const run = spawn("bunx", ["vitest", "run"], { stdio: "inherit" });
 run.on("exit", (code) => process.exit(code ?? 1));
