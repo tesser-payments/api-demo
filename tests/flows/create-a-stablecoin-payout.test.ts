@@ -26,6 +26,13 @@ const SANDBOX_NETWORKS: { key: string; name: string }[] = [
   { key: "STELLAR", name: "Stellar" },
 ];
 
+// Networks /v1/payments actually accepts today. The platform is moving to
+// testnet identifiers; until /v1/payments catches up to /v1/networks's new
+// shape, only the values listed here pass the payment-creation validator.
+// When platform updates, expand this set to include POLYGON_AMOY,
+// BASE_SEPOLIA, and remove this comment.
+const PAYMENTS_ACCEPTS_TODAY = new Set(["STELLAR"]);
+
 describe("create a stablecoin payout", () => {
   let sub: WebhookSubscription;
 
@@ -48,12 +55,25 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
-  const networksWithAddress = SANDBOX_NETWORKS.filter(
+  const acceptedNetworks = SANDBOX_NETWORKS.filter((n) =>
+    PAYMENTS_ACCEPTS_TODAY.has(n.key),
+  );
+  const networksWithAddress = acceptedNetworks.filter(
     (n) => !!resolveWalletAddress(n.key),
   );
-  const skippedNoAddress = SANDBOX_NETWORKS
+
+  const skippedPlatformPending = SANDBOX_NETWORKS
+    .filter((n) => !PAYMENTS_ACCEPTS_TODAY.has(n.key))
+    .map((n) => n.key);
+  const skippedNoAddress = acceptedNetworks
     .filter((n) => !resolveWalletAddress(n.key))
     .map((n) => n.key);
+  if (skippedPlatformPending.length > 0) {
+    console.log(
+      `[payout] skipping networks awaiting platform fix: ${skippedPlatformPending.join(", ")} ` +
+        `(sandbox /v1/payments still rejects testnet identifiers; update PAYMENTS_ACCEPTS_TODAY when fixed)`,
+    );
+  }
   if (skippedNoAddress.length > 0) {
     console.log(
       `[payout] skipping networks without configured wallet: ${skippedNoAddress.join(", ")} ` +
