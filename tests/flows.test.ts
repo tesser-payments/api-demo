@@ -1,39 +1,72 @@
+// Single file for all flow tests so vitest's `sequence.shuffle.tests`
+// interleaves variants across flows (not just within a flow). Vitest 4
+// shuffles tests within a file; tests in different files only get
+// file-level shuffle. Keeping everything in one describe is the only way
+// to truly mix deposit variants and payout variants.
+
 import { afterEach, beforeEach, describe, expect } from "vitest";
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
-import { authenticate } from "../../src/client.ts";
+import { authenticate } from "../src/client.ts";
 import {
   subscribeToWebhooks,
   type WebhookSubscription,
-} from "../../src/webhooks.ts";
-import { run as deposit } from "../../examples/deposit-funds-via-a-liquidity-provider.ts";
+} from "../src/webhooks.ts";
+import {
+  run as deposit,
+  meta as depositMeta,
+} from "../examples/deposit-funds-via-a-liquidity-provider.ts";
 import {
   resolveWalletAddress,
   run as payout,
   meta as payoutMeta,
-} from "../../examples/create-a-stablecoin-payout.ts";
-import { EXPECTED_STABLECOIN_PAYOUT } from "../helpers/expected-events.ts";
-import { sharedState } from "../shared-state.ts";
-import { flowTest } from "../flow-test.ts";
+} from "../examples/create-a-stablecoin-payout.ts";
+import { run as createTenant } from "../examples/create-a-tenant.ts";
+import {
+  EXPECTED_DEPOSIT_LP,
+  EXPECTED_STABLECOIN_PAYOUT,
+} from "./helpers/expected-events.ts";
+import { sharedState } from "./shared-state.ts";
+import { flowTest } from "./flow-test.ts";
 
-// The /v1/networks endpoint is currently inaccurate (returns mainnet keys
-// like POLYGON when the sandbox is actually on Polygon Amoy testnet). Until
-// the endpoint is fixed, hardcode the testnet identifiers the sandbox
-// accepts. When /v1/networks reflects reality, switch back to fetching at
-// globalSetup time (see project_networks_payments_mismatch.md memory).
+// ----------------------------------------------------------------------
+// Deposit-via-LP variants
+// ----------------------------------------------------------------------
+
+const DEPOSIT_VARIANTS: Array<{
+  label: string;
+  withCounterparty: boolean;
+  withTenant: boolean;
+  unsupported?: string;
+}> = [
+  {
+    label: "workspace",
+    withCounterparty: false,
+    withTenant: false,
+    unsupported:
+      "platform rejects (accounts-3006): Circle Mint ledgers require a tenant or counterparty",
+  },
+  { label: "counterparty", withCounterparty: true, withTenant: false },
+  { label: "tenant", withCounterparty: false, withTenant: true },
+  { label: "counterparty-in-tenant", withCounterparty: true, withTenant: true },
+];
+
+// ----------------------------------------------------------------------
+// Payout network variants
+// ----------------------------------------------------------------------
+
 const SANDBOX_NETWORKS: { key: string; name: string }[] = [
   { key: "POLYGON_AMOY", name: "Polygon Amoy" },
   { key: "BASE_SEPOLIA", name: "Base Sepolia" },
   { key: "STELLAR", name: "Stellar" },
 ];
 
-// Networks /v1/payments actually accepts today. The platform is moving to
-// testnet identifiers; until /v1/payments catches up to /v1/networks's new
-// shape, only the values listed here pass the payment-creation validator.
-// When platform updates, expand this set to include POLYGON_AMOY,
-// BASE_SEPOLIA, and remove this comment.
+// /v1/payments still rejects testnet identifiers until the platform fix
+// lands; see memory project_networks_payments_mismatch.md.
 const PAYMENTS_ACCEPTS_TODAY = new Set(["STELLAR"]);
 
-describe("create a stablecoin payout", () => {
+// ----------------------------------------------------------------------
+
+describe("flow tests", () => {
   let sub: WebhookSubscription;
 
   beforeEach(async () => {
@@ -55,13 +88,74 @@ describe("create a stablecoin payout", () => {
     sub?.stop();
   });
 
+  // -- Deposit variants ------------------------------------------------
+
+  for (const v of DEPOSIT_VARIANTS) {
+    flowTest(
+      {
+        docUrl: depositMeta.docUrl,
+        provider: "CIRCLE_MINT",
+        currency: "USDC",
+      },
+      `emits expected events (${v.label})`,
+      async (ctx) => {
+        if (v.unsupported) {
+          ctx.skip(v.unsupported);
+          return;
+        }
+        let tenantId: string | undefined;
+        if (v.withTenant) {
+          const tenant = await createTenant({});
+          tenantId = tenant.tenantId;
+        }
+        const result = await deposit({
+          depositAmount: "100.00",
+          withCounterparty: v.withCounterparty,
+          tenantId,
+        });
+        sharedState.registerLedger(
+          {
+            id: result.ledgerAccountId,
+            provider: "CIRCLE_MINT",
+            currency: "USDC",
+            hasBalance: true,
+            tenantId,
+            counterpartyId: result.counterpartyId ?? undefined,
+            createdBy: `deposit-via-LP / ${v.label}`,
+          },
+          `deposit ${result.depositId}`,
+          {
+            operationKind: "deposit",
+            operationId: result.depositId,
+            operationSummary: "100 USD → USDC",
+          },
+        );
+        const events = await sub.scopedTo(result.depositId).collectAll({
+          expectedTypes: EXPECTED_DEPOSIT_LP.types,
+          timeoutMs: 10 * 60 * 1000,
+        });
+        expect(events.map((e) => e.type)).toEqual([
+          ...EXPECTED_DEPOSIT_LP.types,
+        ]);
+        expect(events.filter((e) => !e.signatureValid)).toEqual([]);
+        expect(result.deposit.desired).toMatchObject(
+          EXPECTED_DEPOSIT_LP.terminal.desired,
+        );
+        expect(result.deposit.estimated).toBeDefined();
+        expect(result.deposit.actual?.to?.amount).toBeDefined();
+      },
+      60 * 60 * 1000,
+    );
+  }
+
+  // -- Payout variants -------------------------------------------------
+
   const acceptedNetworks = SANDBOX_NETWORKS.filter((n) =>
     PAYMENTS_ACCEPTS_TODAY.has(n.key),
   );
   const networksWithAddress = acceptedNetworks.filter(
     (n) => !!resolveWalletAddress(n.key),
   );
-
   const skippedPlatformPending = SANDBOX_NETWORKS
     .filter((n) => !PAYMENTS_ACCEPTS_TODAY.has(n.key))
     .map((n) => n.key);
@@ -91,8 +185,6 @@ describe("create a stablecoin payout", () => {
       },
       "emits expected events",
       async () => {
-        // Reuse a funded ledger if one exists, else fund a fresh one and
-        // register it for downstream reuse by the deposit-via-LP test.
         const existing = sharedState.findFundedLedger({
           provider: "CIRCLE_MINT",
           currency: "USDC",
@@ -148,7 +240,6 @@ describe("create a stablecoin payout", () => {
           expectedTypes: EXPECTED_STABLECOIN_PAYOUT.types,
           timeoutMs: 10 * 60 * 1000,
         });
-
         expect(events.map((e) => e.type)).toEqual([
           ...EXPECTED_STABLECOIN_PAYOUT.types,
         ]);
