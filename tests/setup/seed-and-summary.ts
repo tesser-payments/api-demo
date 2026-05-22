@@ -40,6 +40,9 @@ export default async function setup() {
   // Fetch supported networks once for parameterized flow tests.
   // Dynamic import so client.ts captures the env vars we just populated;
   // a top-level import would freeze them at module load (before loadEnv).
+  const fallbackNetworks: NetworkInfo[] = [{ key: "STELLAR" }];
+  // Reset before fetch so a previous run's file cannot leak across runs.
+  writeFileSync(NETWORKS_FILE_PATH, JSON.stringify(fallbackNetworks, null, 2));
   try {
     const { authenticate, get } = await import("../../src/client.ts");
     await authenticate();
@@ -51,8 +54,7 @@ export default async function setup() {
       ),
     );
   } catch (err) {
-    // Don't fail the whole suite over this — flow tests can fall back to a
-    // single hardcoded network if the file is missing.
+    // Fallback file already written above; just warn.
     console.warn(
       pc.yellow(
         `[setup] failed to fetch /v1/networks: ${err instanceof Error ? err.message : err}. ` +

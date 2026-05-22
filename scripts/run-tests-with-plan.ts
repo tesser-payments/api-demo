@@ -97,7 +97,7 @@ if (list.status !== 0) {
   process.exit(list.status ?? 1);
 }
 
-const stripAnsi = (s: string) => s.replace(/\[[0-9;]*m/g, "");
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const lines = (list.stdout + (list.stderr ?? ""))
   .split("\n")
   .map(stripAnsi)

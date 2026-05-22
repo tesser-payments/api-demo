@@ -134,7 +134,7 @@ export async function run(
   const klass = networkAddressClass(network);
   if (!klass) {
     throw new Error(
-      `Unsupported network ${network}: not classified as STELLAR/SOLANA/EVM. ` +
+      `Unsupported network ${network}: not classified as STELLAR/EVM. ` +
         `Add it to EVM_NETWORKS or networkAddressClass() in create-a-stablecoin-payout.ts.`,
     );
   }

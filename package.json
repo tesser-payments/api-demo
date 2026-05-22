@@ -3,11 +3,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bash -c 'set -o pipefail; bun run scripts/run-tests-with-plan.ts 2>&1 | grep -v \"^Sourcemap for \"'",
+    "test": "bash -c 'set -o pipefail; bun run scripts/run-tests-with-plan.ts 2>&1 | sed \"/^Sourcemap for /d\"'",
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.3.9",
     "vitest": "^4.1.6"
   },
   "peerDependencies": {

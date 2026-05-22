@@ -174,7 +174,9 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
   const apiBaseUrl = opts.apiBaseUrl ?? DEFAULT_API_BASE_URL;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const verifySignatures = opts.verifySignatures ?? true;
-  const publicKey = buildPublicKey(opts.publicKey ?? WEBHOOK_PUBLIC_KEY);
+  const publicKey = verifySignatures
+    ? buildPublicKey(opts.publicKey ?? WEBHOOK_PUBLIC_KEY)
+    : null;
 
   let windowStart: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -221,9 +223,10 @@ export function subscribeToWebhooks(opts: SubscribeOptions): WebhookSubscription
       const envelope = parseEnvelope(req.content);
       if (!envelope) continue;
       const signature = extractHeader(req.headers ?? {}, "x-tesser-signature");
-      const signatureValid = verifySignatures
-        ? verifySignature(req.content, signature, publicKey)
-        : false;
+      const signatureValid =
+        verifySignatures && publicKey
+          ? verifySignature(req.content, signature, publicKey)
+          : false;
       events.push({
         id: envelope.id,
         type: envelope.type,
