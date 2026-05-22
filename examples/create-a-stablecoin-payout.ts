@@ -48,19 +48,31 @@ export interface StablecoinPayoutResult {
 export interface PaymentResponse {
   id: string;
   direction?: string;
+  expires_at?: string;
+  risk_status?: string;
+  balance_status?: string;
   desired?: {
+    from?: { account_id?: string; currency?: string; amount?: string; network?: string };
+    to?: { account_id?: string; currency?: string; amount?: string; network?: string };
+  };
+  estimated?: {
     from?: { currency?: string; amount?: string; network?: string };
     to?: { currency?: string; amount?: string; network?: string };
   };
-  estimated?: unknown;
   actual?: {
-    from?: { currency?: string; amount?: string };
-    to?: { currency?: string; amount?: string };
+    from?: { currency?: string; amount?: string; network?: string };
+    to?: { currency?: string; amount?: string; network?: string };
   };
   steps?: {
     step_sequence: number;
     status: string;
-    status_reasons?: string | null;
+    status_reasons?: string[] | string | null;
+    provider_key?: string;
+    step_type?: string;
+    transaction_hash?: string | null;
+    fees?: unknown[];
+    submitted_at?: string | null;
+    confirmed_at?: string | null;
     finalized_at?: string | null;
     completed_at?: string | null;
   }[];

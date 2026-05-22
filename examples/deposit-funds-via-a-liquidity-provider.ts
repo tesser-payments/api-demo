@@ -46,11 +46,16 @@ export interface DepositLpResult {
 
 export interface DepositResponse {
   id: string;
+  direction?: string;
+  expires_at?: string;
   desired?: {
+    from?: { account_id?: string; currency?: string; amount?: string | null };
+    to?: { account_id?: string; currency?: string; amount?: string | null };
+  };
+  estimated?: {
     from?: { currency?: string; amount?: string };
     to?: { currency?: string; amount?: string };
   };
-  estimated?: unknown;
   actual?: {
     from?: { currency?: string; amount?: string };
     to?: { currency?: string; amount?: string };
@@ -58,7 +63,13 @@ export interface DepositResponse {
   steps?: {
     step_sequence: number;
     status: string;
-    status_reasons?: string | null;
+    status_reasons?: string[] | string | null;
+    provider_key?: string;
+    step_type?: string;
+    transaction_hash?: string | null;
+    fees?: unknown[];
+    submitted_at?: string | null;
+    confirmed_at?: string | null;
     finalized_at?: string | null;
     completed_at?: string | null;
   }[];

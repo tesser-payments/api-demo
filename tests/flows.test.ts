@@ -5,6 +5,12 @@
 // to truly mix deposit variants and payout variants.
 
 import { afterEach, beforeEach, describe, expect } from "vitest";
+
+function countByType(types: readonly string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const t of types) out[t] = (out[t] ?? 0) + 1;
+  return out;
+}
 import { WEBHOOK_SANDBOX_PUBLIC_KEY } from "@tesser-payments/types";
 import { authenticate } from "../src/client.ts";
 import {
@@ -146,15 +152,39 @@ describe("flow tests", () => {
           expectedTypes: EXPECTED_DEPOSIT_LP.types,
           timeoutMs: 10 * 60 * 1000,
         });
-        expect(events.map((e) => e.type)).toEqual([
-          ...EXPECTED_DEPOSIT_LP.types,
-        ]);
+        expect(countByType(events.map((e) => e.type))).toEqual(
+          countByType(EXPECTED_DEPOSIT_LP.types),
+        );
         expect(events.filter((e) => !e.signatureValid)).toEqual([]);
         expect(result.deposit.desired).toMatchObject(
           EXPECTED_DEPOSIT_LP.terminal.desired,
         );
         expect(result.deposit.estimated).toBeDefined();
         expect(result.deposit.actual?.to?.amount).toBeDefined();
+        // Per docs: deposit-funds-via-a-liquidity-provider terminal contract.
+        expect(result.deposit.direction).toBe("inbound");
+        expect(result.deposit.expires_at).toEqual(expect.any(String));
+        // Two transfer steps for the same-currency Circle Mint path.
+        expect(result.deposit.steps).toHaveLength(2);
+        for (const step of result.deposit.steps ?? []) {
+          expect(step.status).toBe("completed");
+          expect(step.provider_key).toBe("circle_mint");
+          expect(step.step_type).toBe("transfer");
+          // Circle Mint deposit steps are off-chain — no transaction hash.
+          expect(step.transaction_hash).toBeNull();
+          expect(step.completed_at).toEqual(expect.any(String));
+          expect(step.status_reasons ?? []).toEqual([]);
+        }
+        // 1:1 USD → USDC at Circle Mint: estimated and actual amounts agree.
+        expect(result.deposit.estimated?.from?.amount).toBe(
+          result.deposit.desired?.from?.amount,
+        );
+        expect(result.deposit.actual?.from?.amount).toBe(
+          result.deposit.estimated?.from?.amount,
+        );
+        expect(result.deposit.actual?.to?.amount).toBe(
+          result.deposit.estimated?.to?.amount,
+        );
       },
       60 * 60 * 1000,
     );
@@ -252,15 +282,42 @@ describe("flow tests", () => {
           expectedTypes: EXPECTED_STABLECOIN_PAYOUT.types,
           timeoutMs: 10 * 60 * 1000,
         });
-        expect(events.map((e) => e.type)).toEqual([
-          ...EXPECTED_STABLECOIN_PAYOUT.types,
-        ]);
+        expect(countByType(events.map((e) => e.type))).toEqual(
+          countByType(EXPECTED_STABLECOIN_PAYOUT.types),
+        );
         expect(events.filter((e) => !e.signatureValid)).toEqual([]);
         expect(result.payment.desired).toMatchObject(
           EXPECTED_STABLECOIN_PAYOUT.terminal.desired,
         );
         expect(result.payment.estimated).toBeDefined();
         expect(result.payment.actual?.to?.amount).toBeDefined();
+        // Per docs: stablecoin payout terminal contract.
+        expect(result.payment.direction).toBe("outbound");
+        expect(result.payment.expires_at).toEqual(expect.any(String));
+        expect(result.payment.steps).toHaveLength(1);
+        const step = result.payment.steps?.[0]!;
+        expect(step.status).toBe("completed");
+        expect(step.provider_key).toBe("circle_mint");
+        expect(step.step_type).toBe("transfer");
+        expect(step.completed_at).toEqual(expect.any(String));
+        expect(step.status_reasons ?? []).toEqual([]);
+        // On-chain transfer — transaction_hash populated.
+        expect(step.transaction_hash).toEqual(expect.any(String));
+        expect(step.transaction_hash?.length).toBeGreaterThan(0);
+        // Risk auto-approves for our funded same-currency flow.
+        expect(result.payment.risk_status).toBe("auto_approved");
+        // Balance was reserved before submission.
+        expect(result.payment.balance_status).toBe("reserved");
+        // Same-currency: estimated and actual amounts equal across from/to.
+        expect(result.payment.estimated?.from?.amount).toBe(
+          result.payment.desired?.from?.amount,
+        );
+        expect(result.payment.actual?.from?.amount).toBe(
+          result.payment.estimated?.from?.amount,
+        );
+        expect(result.payment.actual?.to?.amount).toBe(
+          result.payment.actual?.from?.amount,
+        );
       },
       90 * 60 * 1000,
     );
