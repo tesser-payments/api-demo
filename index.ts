@@ -332,15 +332,20 @@ async function step6_createPayment(
   const payment = await pRetry(
     () =>
       post<{ data: { id: string } }>("/v1/payments", {
-        direction: "outbound",
         funding_account_id: fundingAccountId,
-        from_account_id: fromAccountId,
-        to_account_id: toAccountId,
-        from_amount: amount,
-        from_currency: "USDC",
-        from_network: "STELLAR",
-        to_currency: "USDC",
-        to_network: "STELLAR",
+        desired: {
+          from: {
+            account_id: fromAccountId,
+            amount,
+            currency: "USDC",
+            network: "STELLAR",
+          },
+          to: {
+            account_id: toAccountId,
+            currency: "USDC",
+            network: "STELLAR",
+          },
+        },
       }),
     retryOpts("Payment"),
   );
