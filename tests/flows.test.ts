@@ -161,21 +161,33 @@ describe("flow tests", () => {
         );
         expect(result.deposit.estimated).toBeDefined();
         expect(result.deposit.actual?.to?.amount).toBeDefined();
-        // Per docs: deposit-funds-via-a-liquidity-provider terminal contract.
+        // Deposit terminal contract (verified empirically against sandbox;
+        // see comments in EXPECTED_DEPOSIT_LP for doc-vs-reality notes).
         expect(result.deposit.direction).toBe("inbound");
         expect(result.deposit.expires_at).toEqual(expect.any(String));
-        // Two transfer steps for the same-currency Circle Mint path.
+        // The Circle Mint same-currency path always uses two steps:
+        // a USD transfer (bank → Circle intermediate) and a USD→USDC swap.
         expect(result.deposit.steps).toHaveLength(2);
+        const transferStep = result.deposit.steps?.find(
+          (s) => s.step_type === "transfer",
+        );
+        const swapStep = result.deposit.steps?.find(
+          (s) => s.step_type === "swap",
+        );
+        expect(transferStep).toBeDefined();
+        expect(swapStep).toBeDefined();
         for (const step of result.deposit.steps ?? []) {
           expect(step.status).toBe("completed");
           expect(step.provider_key).toBe("circle_mint");
-          expect(step.step_type).toBe("transfer");
           // Circle Mint deposit steps are off-chain — no transaction hash.
           expect(step.transaction_hash).toBeNull();
           expect(step.completed_at).toEqual(expect.any(String));
           expect(step.status_reasons ?? []).toEqual([]);
         }
-        // 1:1 USD → USDC at Circle Mint: estimated and actual amounts agree.
+        // DEA overlay shape: desired.to.amount stays null (Circle picks
+        // the rate); estimated and actual both fully populate; values
+        // are 1:1 USD → USDC at Circle Mint sandbox.
+        expect(result.deposit.desired?.to?.amount).toBeNull();
         expect(result.deposit.estimated?.from?.amount).toBe(
           result.deposit.desired?.from?.amount,
         );
@@ -289,11 +301,14 @@ describe("flow tests", () => {
         expect(result.payment.desired).toMatchObject(
           EXPECTED_STABLECOIN_PAYOUT.terminal.desired,
         );
-        expect(result.payment.estimated).toBeDefined();
-        expect(result.payment.actual?.to?.amount).toBeDefined();
-        // Per docs: stablecoin payout terminal contract.
+        // Payment terminal contract (verified empirically against sandbox).
+        // Note: docs claim `estimated` populates, but the Stellar payout
+        // path leaves estimated.{from,to}.* null at terminal — only desired
+        // and actual carry values. Asserted accordingly.
         expect(result.payment.direction).toBe("outbound");
         expect(result.payment.expires_at).toEqual(expect.any(String));
+        expect(result.payment.risk_status).toBe("auto_approved");
+        expect(result.payment.balance_status).toBe("reserved");
         expect(result.payment.steps).toHaveLength(1);
         const step = result.payment.steps?.[0]!;
         expect(step.status).toBe("completed");
@@ -304,19 +319,21 @@ describe("flow tests", () => {
         // On-chain transfer — transaction_hash populated.
         expect(step.transaction_hash).toEqual(expect.any(String));
         expect(step.transaction_hash?.length).toBeGreaterThan(0);
-        // Risk auto-approves for our funded same-currency flow.
-        expect(result.payment.risk_status).toBe("auto_approved");
-        // Balance was reserved before submission.
-        expect(result.payment.balance_status).toBe("reserved");
-        // Same-currency: estimated and actual amounts equal across from/to.
-        expect(result.payment.estimated?.from?.amount).toBe(
-          result.payment.desired?.from?.amount,
-        );
+        // Circle Mint charges a provider fee; one entry in fees array.
+        expect((step.fees ?? []).length).toBeGreaterThanOrEqual(1);
+        // Same-currency outbound: actual.from amount equals desired and
+        // equals actual.to (no slippage).
         expect(result.payment.actual?.from?.amount).toBe(
-          result.payment.estimated?.from?.amount,
+          result.payment.desired?.from?.amount,
         );
         expect(result.payment.actual?.to?.amount).toBe(
           result.payment.actual?.from?.amount,
+        );
+        expect(result.payment.actual?.from?.network).toBe(
+          result.payment.desired?.from?.network,
+        );
+        expect(result.payment.actual?.to?.network).toBe(
+          result.payment.desired?.to?.network,
         );
       },
       90 * 60 * 1000,
