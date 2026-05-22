@@ -1,11 +1,10 @@
 // Tutorial 02: Create a Circle Mint ledger account tied to a counterparty.
 //
-// Reads the counterparty ID from `COUNTERPARTY_ID` (set after running
-// tutorial 01). Registers the Circle Mint API key in the vault (one-time,
-// idempotent), then POSTs a ledger tied to the counterparty.
+// Reads the counterparty ID that tutorial 01 wrote to
+// `tutorials/.state.json`. Registers the Circle Mint API key in the
+// vault (idempotent), then POSTs the ledger.
 //
 // Standalone run (after tutorial 01):
-//   export COUNTERPARTY_ID=<from-tutorial-01>
 //   bun run tutorials/02-create-a-ledger.ts
 //
 // Derived from the ledger-creation block in
@@ -15,17 +14,18 @@
 
 import pc from "picocolors";
 import { authenticate, get, post } from "../src/client.ts";
+import { loadState, saveState } from "./state.ts";
 
 export interface LedgerResult {
   ledgerAccountId: string;
 }
 
 export async function tutorial(): Promise<LedgerResult> {
-  const counterpartyId = process.env.COUNTERPARTY_ID;
-  if (!counterpartyId) {
+  const state = loadState();
+  if (!state.counterpartyId) {
     throw new Error(
-      "COUNTERPARTY_ID is required. Run tutorials/01-create-a-counterparty.ts " +
-        "first, then export COUNTERPARTY_ID=<id>.",
+      "tutorials/.state.json is missing `counterpartyId`. " +
+        "Run `bun run tutorials/01-create-a-counterparty.ts` first.",
     );
   }
   const circleApiKey = process.env.CIRCLE_API_KEY;
@@ -53,7 +53,7 @@ export async function tutorial(): Promise<LedgerResult> {
     {
       name: "Acme Holdings LLC Operating Ledger",
       provider: "CIRCLE_MINT",
-      counterparty_id: counterpartyId,
+      counterparty_id: state.counterpartyId,
     },
   );
   const ledgerAccountId = response.data.id;
@@ -63,6 +63,7 @@ export async function tutorial(): Promise<LedgerResult> {
   //    receive deposits.
   await waitForCircleCompliance(ledgerAccountId);
 
+  saveState({ ledgerAccountId });
   return { ledgerAccountId };
 }
 
@@ -91,4 +92,6 @@ if (import.meta.main) {
   await authenticate();
   const result = await tutorial();
   console.log(`Created ledger:  ${pc.cyan(result.ledgerAccountId)}`);
+  console.log("");
+  console.log(pc.dim("Saved to tutorials/.state.json."));
 }

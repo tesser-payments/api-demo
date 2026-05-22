@@ -4,20 +4,22 @@
 // branching — just one POST against `/v1/entities/counterparties` with
 // the fields the platform requires for a US-based business.
 //
+// Running this tutorial clears the local `tutorials/.state.json` and
+// writes the new counterparty's ID into it. Tutorial 02 reads from the
+// same file, so you can chain them by hand without setting env vars.
+//
 // Standalone run:
 //   bun run tutorials/01-create-a-counterparty.ts
-//
-// After it prints the counterparty ID, copy it into the next tutorial:
-//   export COUNTERPARTY_ID=<that-id>
 //   bun run tutorials/02-create-a-ledger.ts
 //
 // Derived from the counterparty-creation block in
 // `examples/deposit-funds-via-a-liquidity-provider.ts`. If the platform
-// changes the required fields, update both — the tutorial test will
-// fail on missing fields, surfacing the drift.
+// changes the required fields, update both — the tutorial test asserts
+// on the resource shape and will surface drift.
 
 import pc from "picocolors";
 import { authenticate, post } from "../src/client.ts";
+import { clearState, saveState } from "./state.ts";
 
 export interface CounterpartyResult {
   counterpartyId: string;
@@ -25,7 +27,19 @@ export interface CounterpartyResult {
 }
 
 export async function tutorial(): Promise<CounterpartyResult> {
-  const name = "Acme Holdings LLC";
+  // Tutorial 01 is the chain's entry point — wiping the state file here
+  // means re-running it always starts a fresh chain.
+  clearState();
+
+  // Circle Mint deduplicates external entities by (name, legal entity
+  // identifier). Re-running the tutorial therefore needs unique values
+  // each time. A timestamp suffix keeps the rest of the body concrete
+  // and copy-pasteable. In production, you'd swap the suffix for your
+  // real registered company name and LEI.
+  const runId = Date.now().toString();
+  const name = `Acme Holdings LLC #${runId}`;
+  const legalEntityIdentifier = `ACME${runId}`;
+
   const response = await post<{ data: { id: string } }>(
     "/v1/entities/counterparties",
     {
@@ -37,10 +51,13 @@ export async function tutorial(): Promise<CounterpartyResult> {
       business_city: "Springfield",
       business_state: "IL",
       business_postal_code: "62701",
-      business_legal_entity_identifier: "ACMEHOLDINGSLLC12345",
+      business_legal_entity_identifier: legalEntityIdentifier,
     },
   );
-  return { counterpartyId: response.data.id, name };
+  const counterpartyId = response.data.id;
+
+  saveState({ counterpartyId });
+  return { counterpartyId, name };
 }
 
 if (import.meta.main) {
@@ -50,7 +67,6 @@ if (import.meta.main) {
     `Created counterparty "${result.name}":  ${pc.cyan(result.counterpartyId)}`,
   );
   console.log("");
-  console.log(pc.dim("Next step:"));
-  console.log(`  export COUNTERPARTY_ID=${result.counterpartyId}`);
+  console.log(pc.dim("Saved to tutorials/.state.json. Next step:"));
   console.log(`  bun run tutorials/02-create-a-ledger.ts`);
 }

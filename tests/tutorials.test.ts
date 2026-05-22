@@ -42,17 +42,9 @@ describe("tutorials (run in numeric order)", () => {
       expect(cp.data.business_address_country).toBe("US");
 
       // ---- Tutorial 02: create ledger ----------------------------------
-      // Pass tutorial 01's output forward via env var, mimicking the
-      // customer workflow. Save and restore so we don't leak to other tests.
-      const previousEnv = process.env.COUNTERPARTY_ID;
-      process.env.COUNTERPARTY_ID = t01.counterpartyId;
-      let t02: Awaited<ReturnType<typeof tutorial02>>;
-      try {
-        t02 = await tutorial02();
-      } finally {
-        if (previousEnv === undefined) delete process.env.COUNTERPARTY_ID;
-        else process.env.COUNTERPARTY_ID = previousEnv;
-      }
+      // Tutorial 01 has already saved its counterpartyId to
+      // tutorials/.state.json; tutorial 02 reads it from there.
+      const t02 = await tutorial02();
       expect(t02.ledgerAccountId).toMatch(UUID_RE);
 
       const ledger = await get<{
