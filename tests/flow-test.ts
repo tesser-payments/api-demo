@@ -57,6 +57,23 @@ export function flowTest(
   }
 }
 
+/**
+ * Registers a variant that is intentionally not run today (e.g., platform
+ * doesn't yet accept the network, env var not configured). Shows up in
+ * vitest's output as a skipped test with the reason inlined into the
+ * name, and is recorded in the variant registry so the reporter can
+ * include it in the matrix.
+ */
+flowTest.skip = function flowTestSkip(
+  variant: FlowVariant,
+  description: string,
+  reason: string,
+): void {
+  const name = `${buildName(variant, description)} | skipped: ${reason}`;
+  VARIANTS.set(name, variant);
+  test.skip(name, () => {});
+};
+
 export function getFlowVariant(name: string): FlowVariant | undefined {
   return VARIANTS.get(name);
 }

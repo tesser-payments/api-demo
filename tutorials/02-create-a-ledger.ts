@@ -14,6 +14,7 @@
 
 import pc from "picocolors";
 import { authenticate, get, post } from "../src/client.ts";
+import { waitUntil } from "../src/wait.ts";
 import { loadState, saveState } from "./state.ts";
 
 export interface LedgerResult {
@@ -68,24 +69,21 @@ export async function tutorial(): Promise<LedgerResult> {
 }
 
 async function waitForCircleCompliance(ledgerAccountId: string): Promise<void> {
-  const intervalMs = 5_000;
-  const deadline = Date.now() + 2 * 60 * 1000;
-  while (true) {
-    const res = await get<{
-      data: {
-        metadata?: { circle_mint?: { circle_compliance_state?: string } };
-      };
-    }>(`/v1/accounts/${ledgerAccountId}`);
-    const state = res.data.metadata?.circle_mint?.circle_compliance_state;
-    if (state === "ACCEPTED") return;
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Ledger ${ledgerAccountId} not ACCEPTED within 2 min ` +
-          `(circle_compliance_state=${state ?? "unset"})`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  await waitUntil(
+    () =>
+      get<{
+        data: {
+          metadata?: { circle_mint?: { circle_compliance_state?: string } };
+        };
+      }>(`/v1/accounts/${ledgerAccountId}`),
+    (res) =>
+      res.data.metadata?.circle_mint?.circle_compliance_state === "ACCEPTED",
+    {
+      timeoutMs: 2 * 60 * 1000,
+      intervalMs: 5_000,
+      describe: `ledger ${ledgerAccountId} circle_compliance_state=ACCEPTED`,
+    },
+  );
 }
 
 if (import.meta.main) {

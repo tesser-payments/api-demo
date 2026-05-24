@@ -19,6 +19,7 @@
 
 import pc from "picocolors";
 import { authenticate, get, getAll, post } from "../src/client.ts";
+import { retryUntilSettled, waitUntil } from "../src/wait.ts";
 import { loadState, saveState } from "./state.ts";
 
 export interface PayoutResult {
@@ -152,21 +153,16 @@ async function findOrCreateFundingBank(): Promise<string> {
 async function createPaymentWhenReady(
   payload: Record<string, unknown>,
 ): Promise<string> {
-  const intervalMs = 10_000;
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (true) {
-    try {
-      const res = await post<{ data: { id: string } }>("/v1/payments", payload);
-      return res.data.id;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("payments-3017")) throw err;
-      if (Date.now() >= deadline) {
-        throw new Error("Wallet risk-approval retry budget exhausted");
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-  }
+  const res = await retryUntilSettled(
+    () => post<{ data: { id: string } }>("/v1/payments", payload),
+    (err) => err instanceof Error && err.message.includes("payments-3017"),
+    {
+      timeoutMs: 5 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: "payment create (wallet risk approval)",
+    },
+  );
+  return res.data.id;
 }
 
 interface PaymentResource {
@@ -180,20 +176,22 @@ interface PaymentResource {
 }
 
 async function pollUntilTerminal(paymentId: string): Promise<PaymentResource> {
-  const intervalMs = 10_000;
-  const deadline = Date.now() + 25 * 60 * 1000;
-  while (true) {
-    const res = await get<{ data: PaymentResource }>(`/v1/payments/${paymentId}`);
-    const failed = res.data.steps?.find((s) => s.status === "failed");
-    if (failed) {
-      throw new Error(`Payment step ${failed.step_sequence} failed`);
-    }
-    if (res.data.actual?.to?.amount) return res.data;
-    if (Date.now() >= deadline) {
-      throw new Error(`Payment ${paymentId} did not terminate within 25 min`);
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  const terminal = await waitUntil(
+    () => get<{ data: PaymentResource }>(`/v1/payments/${paymentId}`),
+    (res) => {
+      const failed = res.data.steps?.find((s) => s.status === "failed");
+      if (failed) {
+        throw new Error(`Payment step ${failed.step_sequence} failed`);
+      }
+      return Boolean(res.data.actual?.to?.amount);
+    },
+    {
+      timeoutMs: 25 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: `payment ${paymentId} terminal (actual.to.amount populated)`,
+    },
+  );
+  return terminal.data;
 }
 
 if (import.meta.main) {

@@ -1,6 +1,7 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { authenticate, get, getAll, post } from "../src/client.ts";
+import { retryUntilSettled, waitUntil } from "../src/wait.ts";
 
 export const meta = {
   name: "Create a stablecoin payout",
@@ -262,59 +263,53 @@ async function createPaymentWhenReady(
   // before they can receive a payment. The custodian flips the state from
   // the API side; there's no observable readiness flag on the wallet, so we
   // retry the create-payment call until the wallet is approved.
-  const intervalMs = 10_000;
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (true) {
-    try {
-      const res = await post<{ data: PaymentResponse }>("/v1/payments", payload);
-      return res.data;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Only retry the wallet risk-approval race. Anything else is real.
-      if (!msg.includes("payments-3017")) throw err;
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `Payment could not be created within 5 min: ${msg}`,
-        );
-      }
-      console.log(pc.dim("  Waiting for wallet risk approval..."));
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-  }
+  const res = await retryUntilSettled(
+    () => post<{ data: PaymentResponse }>("/v1/payments", payload),
+    (err) => err instanceof Error && err.message.includes("payments-3017"),
+    {
+      timeoutMs: 5 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: "payment create (wallet risk approval)",
+      onAttempt: (n) => {
+        if (n > 1) console.log(pc.dim("  Waiting for wallet risk approval..."));
+      },
+    },
+  );
+  return res.data;
 }
 
 async function pollPaymentTerminal(paymentId: string): Promise<PaymentResponse> {
   // Stellar settlement is generally fast (~30s) but allow generous headroom.
-  const intervalMs = 10_000;
-  const deadline = Date.now() + 25 * 60 * 1000;
   let lastLog = "";
-  while (true) {
-    const res = await get<{ data: PaymentResponse }>(`/v1/payments/${paymentId}`);
-    const p = res.data;
-    const failed = p.steps?.find((s) => s.status === "failed");
-    if (failed) {
-      throw new Error(
-        `Payment step ${failed.step_sequence} failed: ${failed.status_reasons}`,
-      );
-    }
-    const log = (p.steps ?? [])
-      .map((s) => `step${s.step_sequence}=${s.status}`)
-      .join(", ");
-    if (log !== lastLog) {
-      console.log(pc.yellow(`  Poll: ${log}`));
-      lastLog = log;
-    }
-    if (p.actual?.to?.amount) {
-      console.log(
-        pc.green(`  Payment terminal: actual.to=${p.actual.to.amount}`),
-      );
-      return p;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(`Payment ${paymentId} did not terminate within 25 min`);
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  const terminal = await waitUntil(
+    () => get<{ data: PaymentResponse }>(`/v1/payments/${paymentId}`),
+    (res) => {
+      const p = res.data;
+      const failed = p.steps?.find((s) => s.status === "failed");
+      if (failed) {
+        throw new Error(
+          `Payment step ${failed.step_sequence} failed: ${failed.status_reasons}`,
+        );
+      }
+      const log = (p.steps ?? [])
+        .map((s) => `step${s.step_sequence}=${s.status}`)
+        .join(", ");
+      if (log !== lastLog) {
+        console.log(pc.yellow(`  Poll: ${log}`));
+        lastLog = log;
+      }
+      return Boolean(p.actual?.to?.amount);
+    },
+    {
+      timeoutMs: 25 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: `payment ${paymentId} terminal (actual.to.amount populated)`,
+    },
+  );
+  console.log(
+    pc.green(`  Payment terminal: actual.to=${terminal.data.actual?.to?.amount}`),
+  );
+  return terminal.data;
 }
 
 async function findOrCreateFundingBank(): Promise<string> {

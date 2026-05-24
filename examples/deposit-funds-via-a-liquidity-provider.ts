@@ -1,6 +1,7 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { authenticate, get, getAll, post } from "../src/client.ts";
+import { retryUntilSettled, waitUntil } from "../src/wait.ts";
 
 export const meta = {
   name: "Deposit funds via a liquidity provider (Circle Mint)",
@@ -281,88 +282,82 @@ async function waitForLedgerProvisioned(ledgerAccountId: string): Promise<void> 
   // Circle ledger compliance is observable on the resource itself via
   // `metadata.circle_mint.circle_compliance_state`, so we poll the
   // resource directly rather than retrying an operation.
-  const intervalMs = 5_000;
-  const deadline = Date.now() + 2 * 60 * 1000;
-  while (true) {
-    const res = await get<{
-      data: {
-        id: string;
-        metadata?: { circle_mint?: { circle_compliance_state?: string } };
-      };
-    }>(`/v1/accounts/${ledgerAccountId}`);
-    const state = res.data.metadata?.circle_mint?.circle_compliance_state;
-    if (state === "ACCEPTED") return;
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Ledger ${ledgerAccountId} not provisioned within 2 min ` +
-          `(circle_compliance_state=${state ?? "unset"})`,
-      );
-    }
-    console.log(pc.dim(`  Waiting for Circle provisioning (state=${state ?? "unset"})...`));
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  let lastState: string | undefined;
+  await waitUntil(
+    () =>
+      get<{
+        data: {
+          id: string;
+          metadata?: { circle_mint?: { circle_compliance_state?: string } };
+        };
+      }>(`/v1/accounts/${ledgerAccountId}`),
+    (res) => {
+      const state = res.data.metadata?.circle_mint?.circle_compliance_state;
+      if (state !== lastState) {
+        console.log(pc.dim(`  Waiting for Circle provisioning (state=${state ?? "unset"})...`));
+        lastState = state;
+      }
+      return state === "ACCEPTED";
+    },
+    {
+      timeoutMs: 2 * 60 * 1000,
+      intervalMs: 5_000,
+      describe: `ledger ${ledgerAccountId} circle_compliance_state=ACCEPTED`,
+    },
+  );
 }
 
 async function simulateDepositWhenReady(depositId: string): Promise<void> {
   // Deposit step/account wiring is provisioned asynchronously after the
   // deposit is created. There's no observable readiness flag — the only
   // signal is the simulate call itself, so we retry the operation.
-  const intervalMs = 5_000;
-  const deadline = Date.now() + 60_000;
-  while (true) {
-    try {
-      await post(`/v1/treasury/deposits/${depositId}/simulate`, {});
-      return;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Only retry the wiring race. Anything else is a real failure.
-      if (!msg.includes("treasury-3111")) throw err;
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `Deposit ${depositId} simulate could not run within 60s: ${msg}`,
-        );
-      }
-      console.log(pc.dim("  Waiting for deposit step wiring..."));
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-  }
+  await retryUntilSettled(
+    () => post(`/v1/treasury/deposits/${depositId}/simulate`, {}),
+    (err) => err instanceof Error && err.message.includes("treasury-3111"),
+    {
+      timeoutMs: 60_000,
+      intervalMs: 5_000,
+      describe: `deposit ${depositId} simulate`,
+      onAttempt: (n) => {
+        if (n > 1) console.log(pc.dim("  Waiting for deposit step wiring..."));
+      },
+    },
+  );
 }
 
 async function pollDepositTerminal(depositId: string): Promise<DepositResponse> {
-  const intervalMs = 10_000;
   // Sandbox-simulated deposits can take up to 20 min to advance steps to
   // `completed`. Budget 25 min so we don't false-alarm on healthy runs.
-  const deadline = Date.now() + 25 * 60 * 1000;
   let lastLog = "";
-  while (true) {
-    const res = await get<{ data: DepositResponse }>(
-      `/v1/treasury/deposits/${depositId}`,
-    );
-    const d = res.data;
-    const failed = d.steps?.find((s) => s.status === "failed");
-    if (failed) {
-      throw new Error(
-        `Deposit step ${failed.step_sequence} failed: ${failed.status_reasons}`,
-      );
-    }
-    const log = (d.steps ?? [])
-      .map((s) => `step${s.step_sequence}=${s.status}`)
-      .join(", ");
-    if (log !== lastLog) {
-      console.log(pc.yellow(`  Poll: ${log}`));
-      lastLog = log;
-    }
-    if (d.actual?.to?.amount) {
-      console.log(
-        pc.green(`  Deposit terminal: actual.to=${d.actual.to.amount}`),
-      );
-      return d;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(`Deposit ${depositId} did not terminate within 25 min`);
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  const terminal = await waitUntil(
+    () => get<{ data: DepositResponse }>(`/v1/treasury/deposits/${depositId}`),
+    (res) => {
+      const d = res.data;
+      const failed = d.steps?.find((s) => s.status === "failed");
+      if (failed) {
+        throw new Error(
+          `Deposit step ${failed.step_sequence} failed: ${failed.status_reasons}`,
+        );
+      }
+      const log = (d.steps ?? [])
+        .map((s) => `step${s.step_sequence}=${s.status}`)
+        .join(", ");
+      if (log !== lastLog) {
+        console.log(pc.yellow(`  Poll: ${log}`));
+        lastLog = log;
+      }
+      return Boolean(d.actual?.to?.amount);
+    },
+    {
+      timeoutMs: 25 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: `deposit ${depositId} terminal (actual.to.amount populated)`,
+    },
+  );
+  console.log(
+    pc.green(`  Deposit terminal: actual.to=${terminal.data.actual?.to?.amount}`),
+  );
+  return terminal.data;
 }
 
 if (import.meta.main) {

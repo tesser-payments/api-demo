@@ -15,6 +15,7 @@
 
 import pc from "picocolors";
 import { authenticate, get, getAll, post } from "../src/client.ts";
+import { retryUntilSettled, waitUntil } from "../src/wait.ts";
 import { loadState, saveState } from "./state.ts";
 
 export interface DepositResult {
@@ -109,21 +110,15 @@ async function findOrCreateFundingBank(): Promise<string> {
 }
 
 async function simulateWhenReady(depositId: string): Promise<void> {
-  const intervalMs = 5_000;
-  const deadline = Date.now() + 60_000;
-  while (true) {
-    try {
-      await post(`/v1/treasury/deposits/${depositId}/simulate`, {});
-      return;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("treasury-3111")) throw err;
-      if (Date.now() >= deadline) {
-        throw new Error(`Simulate retry budget exhausted for ${depositId}`);
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-  }
+  await retryUntilSettled(
+    () => post(`/v1/treasury/deposits/${depositId}/simulate`, {}),
+    (err) => err instanceof Error && err.message.includes("treasury-3111"),
+    {
+      timeoutMs: 60_000,
+      intervalMs: 5_000,
+      describe: `deposit ${depositId} simulate`,
+    },
+  );
 }
 
 interface DepositResource {
@@ -132,23 +127,23 @@ interface DepositResource {
 }
 
 async function pollUntilTerminal(depositId: string): Promise<DepositResource> {
-  const intervalMs = 10_000;
   // Sandbox-simulated deposits can take up to 20 min to complete.
-  const deadline = Date.now() + 25 * 60 * 1000;
-  while (true) {
-    const res = await get<{ data: DepositResource }>(
-      `/v1/treasury/deposits/${depositId}`,
-    );
-    const failed = res.data.steps?.find((s) => s.status === "failed");
-    if (failed) {
-      throw new Error(`Deposit step ${failed.step_sequence} failed`);
-    }
-    if (res.data.actual?.to?.amount) return res.data;
-    if (Date.now() >= deadline) {
-      throw new Error(`Deposit ${depositId} did not terminate within 25 min`);
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  const terminal = await waitUntil(
+    () => get<{ data: DepositResource }>(`/v1/treasury/deposits/${depositId}`),
+    (res) => {
+      const failed = res.data.steps?.find((s) => s.status === "failed");
+      if (failed) {
+        throw new Error(`Deposit step ${failed.step_sequence} failed`);
+      }
+      return Boolean(res.data.actual?.to?.amount);
+    },
+    {
+      timeoutMs: 25 * 60 * 1000,
+      intervalMs: 10_000,
+      describe: `deposit ${depositId} terminal (actual.to.amount populated)`,
+    },
+  );
+  return terminal.data;
 }
 
 if (import.meta.main) {
