@@ -20,6 +20,8 @@ const STATE_PATH = join(
 export interface TutorialState {
   counterpartyId?: string;
   ledgerAccountId?: string;
+  depositId?: string;
+  paymentId?: string;
   // Add more keys as later tutorials produce new resources.
 }
 
