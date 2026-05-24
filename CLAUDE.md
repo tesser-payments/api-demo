@@ -8,11 +8,11 @@ Dual-purpose repository:
 
 ## Tech Stack
 
-- **Bun** runtime — use `bun` for everything (`bun test`, `bun run`, `bun install`, `bunx`)
+- **Bun** runtime — for executing code and managing packages (`bun run`, `bun install`, `bunx`). Not used as the test runner.
 - `Bun.serve()` for HTTP servers — not Express
-- `bun:test` for testing — not Jest/Vitest
+- **Vitest** for testing — not `bun:test`, Jest, or Mocha. Run via `bunx vitest` (or `bun run test`).
 - Bun auto-loads `.env` — no dotenv needed
-- No Node.js, npm, pnpm, Vite, or Webpack
+- No npm, pnpm, Webpack
 
 ## Environment Setup
 
