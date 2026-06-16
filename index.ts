@@ -117,7 +117,11 @@ async function step1_5_storeCircleMintKey(): Promise<void> {
     console.log(`  Masked value:  ${result.masked_value}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("secrets-0002")) {
+    if (
+      message.includes("organizations-0009") ||
+      message.includes("secrets-0002") ||
+      message.includes("already configured")
+    ) {
       console.log(pc.dim("  Already configured — continuing"));
       return;
     }
