@@ -1,0 +1,3 @@
+#!/bin/sh
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec bun --no-env-file "$script_directory/src/index.ts" "$@"
