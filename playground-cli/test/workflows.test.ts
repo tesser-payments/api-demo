@@ -6,6 +6,7 @@ import { Output } from "../src/output.ts";
 import type { Runtime } from "../src/runtime.ts";
 import { runPayment } from "../src/workflows/payment.ts";
 import { runWithdrawal } from "../src/workflows/withdrawal.ts";
+import { runRebalance } from "../src/workflows/rebalance.ts";
 
 function response(data: unknown): HttpResponse {
   return {
@@ -123,6 +124,143 @@ describe("resumable workflows", () => {
 
     expect(request).toHaveBeenCalledTimes(3);
     expect(write.mock.calls.at(-1)?.[0]).toContain('"id": "withdrawal-id"');
+    write.mockRestore();
+  });
+
+  test("validates rebalance configuration without API calls", async () => {
+    const environment = {
+      SIGNING_PUBLIC_KEY: "public",
+      SIGNING_PRIVATE_KEY: "private",
+      SIGNING_ENCLAVE_ID: "enclave",
+    };
+    const { runtime, request } = runtimeFor([], environment);
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runRebalance(runtime, { validateOnly: true });
+
+    expect(request).not.toHaveBeenCalled();
+    expect(write.mock.calls.at(-1)?.[0]).toContain('"valid": true');
+    write.mockRestore();
+  });
+
+  test("resumes an already submitted rebalance and polls to completion", async () => {
+    const environment = {
+      SIGNING_PUBLIC_KEY: "public",
+      SIGNING_PRIVATE_KEY: "private",
+      SIGNING_ENCLAVE_ID: "enclave",
+    };
+    const submitted = {
+      id: "rebalance-id",
+      balance_status: "reserved",
+      steps: [
+        {
+          id: "step-id",
+          step_sequence: 1,
+          provider_key: "turnkey",
+          status: "submitted",
+          transaction_hash: "0xhash",
+        },
+      ],
+    };
+    const completed = {
+      ...submitted,
+      steps: [{ ...submitted.steps[0], status: "completed" }],
+    };
+    const { runtime, request } = runtimeFor(
+      [response(submitted), response(submitted), response(completed)],
+      environment,
+    );
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runRebalance(runtime, {
+      rebalanceId: "rebalance-id",
+      pollIntervalSeconds: 0.001,
+      timeoutSeconds: 1,
+    });
+
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(write.mock.calls.at(-1)?.[0]).toContain('"id": "rebalance-id"');
+    write.mockRestore();
+  });
+
+  test("creates a wallet-to-OpenFX-ledger rebalance with the expected body", async () => {
+    const environment = {
+      SIGNING_PUBLIC_KEY: "public",
+      SIGNING_PRIVATE_KEY: "private",
+      SIGNING_ENCLAVE_ID: "enclave",
+    };
+    const sourceWallet = {
+      id: "wallet-id",
+      crypto_wallet_address: "0x1111111111111111111111111111111111111111",
+      is_managed: true,
+      tenant_id: null,
+      counterparty_id: null,
+      assets: [{ currency: "USDC", network: "BASE_SEPOLIA" }],
+    };
+    const destinationLedger = {
+      id: "ledger-id",
+      type: "ledger",
+      provider: "OPENFX",
+      tenant_id: null,
+      counterparty_id: null,
+    };
+    const completed = {
+      id: "rebalance-id",
+      balance_status: "reserved",
+      steps: [
+        {
+          id: "step-id",
+          step_sequence: 1,
+          provider_key: "turnkey",
+          status: "completed",
+        },
+      ],
+    };
+    const { runtime, request } = runtimeFor(
+      [
+        response([sourceWallet]),
+        response([destinationLedger]),
+        response({ id: "rebalance-id", steps: [] }),
+        response(completed),
+        response(completed),
+      ],
+      environment,
+    );
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runRebalance(runtime, {
+      amount: "100",
+      fromCurrency: "USDC",
+      fromNetwork: "BASE_SEPOLIA",
+      toCurrency: "USD",
+      organizationReferenceId: "rebalance-reference",
+      pollIntervalSeconds: 0.001,
+      timeoutSeconds: 1,
+    });
+
+    expect(request).toHaveBeenCalledTimes(5);
+    expect(request.mock.calls[2]).toEqual([
+      "POST",
+      "/v1/treasury/rebalances",
+      {
+        body: {
+          organization_reference_id: "rebalance-reference",
+          desired: {
+            from: {
+              account_id: "wallet-id",
+              amount: "100",
+              currency: "USDC",
+              network: "BASE_SEPOLIA",
+            },
+            to: {
+              account_id: "ledger-id",
+              currency: "USD",
+            },
+          },
+        },
+        operation: "Create rebalance",
+      },
+    ]);
     write.mockRestore();
   });
 });

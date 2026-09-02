@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WithdrawalDashboard } from "../src/dashboard.ts";
+import { RebalanceDashboard, WithdrawalDashboard } from "../src/dashboard.ts";
 
 describe("withdrawal dashboard", () => {
   test("renders a sanitized sequence diagram with ordered steps", () => {
@@ -112,6 +112,72 @@ describe("withdrawal dashboard", () => {
     expect(html).not.toContain("unsigned-secret");
     expect(html).toContain('http-equiv="refresh"');
     expect(html).toContain("<script>");
+    const script = html.match(/<script>([\s\S]+)<\/script>/)?.[1];
+    expect(script).toBeDefined();
+    expect(() => new Function(script!)).not.toThrow();
+
+    dashboard.complete();
+    expect(readFileSync(path, "utf8")).not.toContain('http-equiv="refresh"');
+  });
+});
+
+describe("rebalance dashboard", () => {
+  test("renders the wallet deposit and OpenFX mock boundary", () => {
+    const directory = mkdtempSync(join(tmpdir(), "playground-rebalance-dashboard-"));
+    const path = join(directory, "index.html");
+    const dashboard = new RebalanceDashboard(path);
+    dashboard.start();
+    dashboard.updateRebalance({
+      id: "rebalance-id",
+      organization_reference_id: "reference",
+      balance_status: "reserved",
+      created_at: "2026-09-01T18:17:30.147Z",
+      updated_at: "2026-09-01T18:18:05.785Z",
+      desired: {
+        from: { amount: "100", currency: "USDC", network: "BASE_SEPOLIA" },
+      },
+      estimated: {
+        to: { amount: "99.5", currency: "USD" },
+      },
+      steps: [
+        {
+          id: "step-1",
+          step_sequence: 1,
+          provider_key: "turnkey",
+          step_type: "transfer",
+          status: "confirmed",
+          signed_at: "2026-09-01T18:17:40.147Z",
+          submitted_at: "2026-09-01T18:17:45.147Z",
+          confirmed_at: "2026-09-01T18:18:05.785Z",
+          transaction_hash: "0xconfirmed",
+          estimated: {
+            from: { amount: "100", currency: "USDC", network: "BASE_SEPOLIA" },
+            to: { amount: "100", currency: "USDC" },
+          },
+        },
+        {
+          id: "step-2",
+          step_sequence: 2,
+          provider_key: "openfx",
+          step_type: "swap",
+          status: "created",
+          estimated: {
+            from: { amount: "100", currency: "USDC" },
+            to: { amount: "99.5", currency: "USD" },
+          },
+        },
+      ],
+    });
+
+    const html = readFileSync(path, "utf8");
+    expect(html).toContain("Rebalance sequence");
+    expect(html).toContain("OpenFX ledger");
+    expect(html).toContain("Move funds from wallet to OpenFX ledger");
+    expect(html).toContain("Wait for OpenFX mock deposit");
+    expect(html).toContain("Convert funds through OpenFX");
+    expect(html).toContain("Raw rebalance JSON");
+    expect(html).toContain('data-event-id="step-1-openfx-deposit"');
+    expect(html).not.toContain("Destination bank");
     const script = html.match(/<script>([\s\S]+)<\/script>/)?.[1];
     expect(script).toBeDefined();
     expect(() => new Function(script!)).not.toThrow();

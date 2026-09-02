@@ -1,6 +1,6 @@
 # Tesser Playground CLI
 
-A standalone Bun and TypeScript playground for authenticated Tesser API requests, payments, inbound simulations, OpenFX setup, and withdrawals.
+A standalone Bun and TypeScript playground for authenticated Tesser API requests, payments, inbound simulations, OpenFX setup, withdrawals, and rebalances.
 
 ## Setup
 
@@ -39,6 +39,7 @@ Precedence is command options, calling-process environment, selected env file, t
 ./cli --env-file sandbox.env
 ./cli --env-file sandbox.env payment
 ./cli --env-file sandbox.env withdrawal --with-ui
+./cli --env-file sandbox.env rebalance --with-ui
 ```
 
 With no command, the CLI opens a command menu. Explicit commands prompt for missing values and confirm mutations.
@@ -52,6 +53,11 @@ The withdrawal UI is a dependency-free HTML file with embedded CSS and JavaScrip
 shows the CLI, Tesser, signer, blockchain, OpenFX, and bank as a live sequence diagram.
 Select a transfer step to inspect its timestamps, failure reasons, transaction state,
 and sanitized JSON. On narrow screens, the diagram becomes a vertical event timeline.
+
+The rebalance flow moves funds from a managed wallet to an OpenFX ledger. It signs the
+wallet transaction locally, waits for the matching OpenFX sandbox mock deposit, and
+then follows any ledger swap through completion. Its live UI is written to
+`ui/rebalance/index.html` and shows the mock-deposit boundary in the sequence diagram.
 
 ## Non-interactive mode
 
@@ -72,6 +78,7 @@ Without `--env-file`, it uses only the calling-process environment.
 ./cli request METHOD PATH
 ./cli payment [destination-wallet-address]
 ./cli withdrawal
+./cli rebalance
 ./cli wallet-address
 ./cli simulate-inbound
 ./cli openfx register [api-key-file]

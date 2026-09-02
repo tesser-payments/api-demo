@@ -12,6 +12,7 @@ import { createRuntime, type Runtime } from "./runtime.ts";
 import { runRequest, type RequestCommandOptions } from "./workflows/request.ts";
 import { runPayment, type PaymentOptions } from "./workflows/payment.ts";
 import { runWithdrawal, type WithdrawalOptions } from "./workflows/withdrawal.ts";
+import { runRebalance, type RebalanceOptions } from "./workflows/rebalance.ts";
 import { runWalletAddress, type WalletOptions } from "./workflows/wallet.ts";
 import {
   runSimulateInbound,
@@ -114,6 +115,25 @@ program
   );
 
 program
+  .command("rebalance")
+  .description("Create or resume and sign a wallet-to-OpenFX-ledger rebalance")
+  .option("--rebalance-id <id>", "Resume an existing rebalance")
+  .option("--source-wallet-id <id>", "Source wallet account ID")
+  .option("--destination-ledger-id <id>", "Destination OpenFX ledger account ID")
+  .option("--amount <amount>", "Rebalance amount")
+  .option("--from-currency <currency>", "Source currency")
+  .option("--from-network <network>", "Source network")
+  .option("--to-currency <currency>", "Destination ledger currency")
+  .option("--organization-reference-id <id>", "Rebalance organization reference")
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--validate-only", "Validate configuration without calling an API")
+  .option("--with-ui", "Write a live HTML rebalance dashboard")
+  .action(async (options: RebalanceOptions, command: Command) =>
+    runRebalance((await contextFor(command)).runtime(), options),
+  );
+
+program
   .command("wallet-address")
   .description("Resolve a workspace wallet address")
   .option("--wallet-id <id>", "Wallet account ID")
@@ -194,6 +214,7 @@ async function runInteractiveMenu(context: Context): Promise<void> {
       { name: "Make an API request", value: "request" },
       { name: "Send a payment", value: "payment" },
       { name: "Run a withdrawal", value: "withdrawal" },
+      { name: "Run an OpenFX rebalance", value: "rebalance" },
       { name: "Show a wallet address", value: "wallet" },
       { name: "Simulate inbound payments", value: "simulate" },
       { name: "Register OpenFX credentials", value: "openfx-register" },
@@ -208,6 +229,7 @@ async function runInteractiveMenu(context: Context): Promise<void> {
       if (selected === "request") await runRequest(runtime, undefined, undefined, {});
       if (selected === "payment") await runPayment(runtime, undefined, {});
       if (selected === "withdrawal") await runWithdrawal(runtime, {});
+      if (selected === "rebalance") await runRebalance(runtime, {});
       if (selected === "wallet") await runWalletAddress(runtime, {});
       if (selected === "simulate") await runSimulateInbound(runtime, {});
       if (selected === "openfx-register") await registerOpenFx(runtime, undefined);
