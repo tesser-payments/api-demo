@@ -4,7 +4,8 @@ import { sanitize } from "./output.ts";
 
 type DashboardStatus = "running" | "completed" | "failed";
 type EventStatus = "complete" | "active" | "waiting" | "failed" | "skipped" | "pending";
-type ActorId = "cli" | "tesser" | "signer" | "network" | "openfx" | "bank";
+type ActorId = "cli" | "tesser" | "signer" | "network" | "openfx" | "bank" | "ledger";
+type DashboardResource = "withdrawal" | "rebalance";
 
 type Actor = {
   id: ActorId;
@@ -37,6 +38,15 @@ const actors: Actor[] = [
   { id: "network", label: "Blockchain", shortLabel: "Network" },
   { id: "openfx", label: "OpenFX", shortLabel: "OpenFX" },
   { id: "bank", label: "Destination bank", shortLabel: "Bank" },
+];
+
+const rebalanceActors: Actor[] = [
+  { id: "cli", label: "Playground CLI", shortLabel: "CLI" },
+  { id: "tesser", label: "Tesser API", shortLabel: "Tesser" },
+  { id: "signer", label: "Local signer", shortLabel: "Signer" },
+  { id: "network", label: "Blockchain", shortLabel: "Network" },
+  { id: "openfx", label: "OpenFX", shortLabel: "OpenFX" },
+  { id: "ledger", label: "OpenFX ledger", shortLabel: "Ledger" },
 ];
 
 export class WithdrawalDashboard {
@@ -81,20 +91,70 @@ export class WithdrawalDashboard {
     mkdirSync(dirname(this.outputPath), { recursive: true });
     writeFileSync(
       this.outputPath,
-      renderDashboard(this.withdrawal, this.status, this.action, this.error),
+      renderDashboard("withdrawal", this.withdrawal, this.status, this.action, this.error),
+    );
+  }
+}
+
+export class RebalanceDashboard {
+  readonly outputPath: string;
+  private status: DashboardStatus = "running";
+  private action = "Preparing rebalance";
+  private rebalance: Record<string, unknown> = {};
+  private error?: string;
+
+  constructor(outputPath = "ui/rebalance/index.html") {
+    this.outputPath = resolve(outputPath);
+  }
+
+  start(): void {
+    this.render();
+  }
+
+  updateAction(action: string): void {
+    this.action = action;
+    this.render();
+  }
+
+  updateRebalance(rebalance: Record<string, unknown>): void {
+    this.rebalance = sanitize(rebalance) as Record<string, unknown>;
+    this.render();
+  }
+
+  complete(): void {
+    this.status = "completed";
+    this.action = "Every rebalance step completed";
+    this.render();
+  }
+
+  fail(message: string): void {
+    this.status = "failed";
+    this.error = message;
+    this.action = "Rebalance stopped";
+    this.render();
+  }
+
+  private render(): void {
+    mkdirSync(dirname(this.outputPath), { recursive: true });
+    writeFileSync(
+      this.outputPath,
+      renderDashboard("rebalance", this.rebalance, this.status, this.action, this.error),
     );
   }
 }
 
 function renderDashboard(
+  resource: DashboardResource,
   withdrawal: Record<string, unknown>,
   status: DashboardStatus,
   action: string,
   error?: string,
 ): string {
+  const resourceLabel = capitalize(resource);
+  const dashboardActors = actorsFor(resource);
   const steps = withdrawalSteps(withdrawal);
-  const events = sequenceEvents(withdrawal, steps, status, action);
-  const failure = failureSummary(steps, error);
+  const events = sequenceEvents(resource, withdrawal, steps, status, action);
+  const failure = failureSummary(resource, steps, error);
   const withdrawalId = text(withdrawal.id);
   const reference = text(withdrawal.organization_reference_id);
   const balanceStatus = text(withdrawal.balance_status);
@@ -106,24 +166,24 @@ function renderDashboard(
   const network = displayValue(requestedFrom.network);
   const refresh = status === "running" ? '<meta http-equiv="refresh" content="2">' : "";
   const statusLabel = status === "running" ? "In progress" : capitalize(status);
-  const actorHeaders = actors
+  const actorHeaders = dashboardActors
     .map((actor) => `<div class="actor actor-${actor.id}"><span>${escapeHtml(actor.label)}</span></div>`)
     .join("");
-  const eventRows = events.map((event) => renderSequenceEvent(event)).join("");
+  const eventRows = events.map((event) => renderSequenceEvent(resource, event)).join("");
   const stepButtons = steps.length
-    ? steps.map((step) => renderStepButton(step)).join("")
-    : '<div class="empty-state">Waiting for Tesser to plan the withdrawal steps.</div>';
-  const stepTemplates = steps.map((step) => renderStepTemplate(step)).join("");
+    ? steps.map((step) => renderStepButton(resource, step)).join("")
+    : `<div class="empty-state">Waiting for Tesser to plan the ${resource} steps.</div>`;
+  const stepTemplates = steps.map((step) => renderStepTemplate(resource, step)).join("");
   const failureHtml = failure ? renderFailure(failure, error) : "";
   const safeWithdrawal = escapeHtml(JSON.stringify(withdrawal, null, 2));
-  const storageKey = `tesser-withdrawal-dashboard:${withdrawalId || "pending"}`;
+  const storageKey = `tesser-${resource}-dashboard:${withdrawalId || "pending"}`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 ${refresh}
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tesser Withdrawal ${escapeHtml(withdrawalId || "")}</title>
+<title>Tesser ${resourceLabel} ${escapeHtml(withdrawalId || "")}</title>
 <style>
 :root {
   color-scheme: dark;
@@ -263,7 +323,7 @@ button.event-card:hover .event-copy, button.event-card.selected .event-copy { ba
 <main class="page">
   <section class="hero">
     <div class="hero-top">
-      <div><div class="eyebrow">Withdrawal</div><h1>${escapeHtml(amountSummary)}</h1></div>
+      <div><div class="eyebrow">${resourceLabel}</div><h1>${escapeHtml(amountSummary)}</h1></div>
       <div class="status-badge status-${status}">${escapeHtml(statusLabel)}</div>
     </div>
     <div class="hero-meta">
@@ -279,7 +339,7 @@ button.event-card:hover .event-copy, button.event-card.selected .event-copy { ba
   ${failureHtml}
   <section class="panel">
     <div class="panel-heading">
-      <h2>Withdrawal sequence</h2>
+      <h2>${resourceLabel} sequence</h2>
       ${status === "running" ? '<span class="live-label"><span class="live-dot"></span>Refreshing every 2 seconds</span>' : `<span class="live-label">${escapeHtml(statusLabel)}</span>`}
     </div>
     <div class="diagram-scroll">
@@ -295,7 +355,7 @@ button.event-card:hover .event-copy, button.event-card.selected .event-copy { ba
   </section>
   <section class="panel technical-panel">
     <details class="raw">
-      <summary>Raw withdrawal JSON</summary>
+      <summary>Raw ${resource} JSON</summary>
       <div class="raw-actions"><button class="small-button" data-copy-previous>Copy JSON</button></div>
       <pre>${safeWithdrawal}</pre>
     </details>
@@ -404,6 +464,7 @@ if (selectedStep) openStep(selectedStep);
 }
 
 function sequenceEvents(
+  resource: DashboardResource,
   withdrawal: Record<string, unknown>,
   steps: Record<string, unknown>[],
   dashboardStatus: DashboardStatus,
@@ -412,17 +473,17 @@ function sequenceEvents(
   const events: SequenceEvent[] = [];
   const withdrawalId = text(withdrawal.id);
   events.push({
-    id: "create-withdrawal",
+    id: `create-${resource}`,
     at: text(withdrawal.created_at),
     from: "cli",
     to: "tesser",
-    label: "Create withdrawal",
-    detail: withdrawalId ? `Withdrawal ${shortId(withdrawalId)}` : action,
+    label: `Create ${resource}`,
+    detail: withdrawalId ? `${capitalize(resource)} ${shortId(withdrawalId)}` : action,
     status: withdrawalId ? "complete" : dashboardEventStatus(dashboardStatus),
   });
   if (!steps.length) {
     events.push({
-      id: "plan-withdrawal",
+      id: `plan-${resource}`,
       from: "tesser",
       to: "tesser",
       label: "Plan transfer steps",
@@ -431,11 +492,14 @@ function sequenceEvents(
     });
     return events;
   }
-  for (const step of steps) events.push(...eventsForStep(step));
+  for (const step of steps) events.push(...eventsForStep(resource, step));
   return events;
 }
 
-function eventsForStep(step: Record<string, unknown>): SequenceEvent[] {
+function eventsForStep(
+  resource: DashboardResource,
+  step: Record<string, unknown>,
+): SequenceEvent[] {
   const stepId = text(step.id);
   const sequence = Number(step.step_sequence ?? 0);
   const provider = text(step.provider_key).toLowerCase();
@@ -524,10 +588,32 @@ function eventsForStep(step: Record<string, unknown>): SequenceEvent[] {
         stepId,
         at: confirmedAt,
         from: "network",
-        to: "tesser",
+        to: resource === "rebalance" ? "ledger" : "tesser",
         label: "Confirm wallet transfer",
         detail: shortHash(text(step.transaction_hash)),
         status: "complete",
+      });
+    }
+    if (resource === "rebalance" && text(step.completed_at)) {
+      events.push({
+        id: `${stepId}-openfx-deposit`,
+        stepId,
+        at: text(step.completed_at),
+        from: "ledger",
+        to: "tesser",
+        label: "Credit OpenFX ledger",
+        detail: "Mock deposit matched by the OpenFX webhook",
+        status: "complete",
+      });
+    } else if (resource === "rebalance" && (confirmedAt || submittedAt)) {
+      events.push({
+        id: `${stepId}-openfx-deposit`,
+        stepId,
+        from: "ledger",
+        to: "tesser",
+        label: "Wait for OpenFX mock deposit",
+        detail: transferDetail,
+        status: "waiting",
       });
     }
     if (!events.length) {
@@ -577,9 +663,10 @@ function openFxStatusWebhookEvent(
   };
 }
 
-function renderSequenceEvent(event: SequenceEvent): string {
-  const fromIndex = actors.findIndex((actor) => actor.id === event.from);
-  const toIndex = actors.findIndex((actor) => actor.id === event.to);
+function renderSequenceEvent(resource: DashboardResource, event: SequenceEvent): string {
+  const dashboardActors = actorsFor(resource);
+  const fromIndex = dashboardActors.findIndex((actor) => actor.id === event.from);
+  const toIndex = dashboardActors.findIndex((actor) => actor.id === event.to);
   const firstActor = Math.min(fromIndex, toIndex) + 2;
   const lastActor = Math.max(fromIndex, toIndex) + 3;
   const actorSpan = Math.abs(fromIndex - toIndex) + 1;
@@ -587,10 +674,10 @@ function renderSequenceEvent(event: SequenceEvent): string {
   const stepAttribute = event.stepId ? ` data-step-id="${escapeHtml(event.stepId)}"` : "";
   const tag = event.stepId ? "button" : "div";
   const detail = event.detail ? `<span class="event-detail">${escapeHtml(event.detail)}</span>` : "";
-  const from = actorLabel(event.from);
-  const to = actorLabel(event.to);
+  const from = actorLabel(resource, event.from);
+  const to = actorLabel(resource, event.to);
   const route = from === to ? from : `${from} → ${to}`;
-  const lanes = actors.map(() => '<span class="lane-cell"></span>').join("");
+  const lanes = dashboardActors.map(() => '<span class="lane-cell"></span>').join("");
   return `<div class="event-row" data-event-id="${escapeHtml(event.id)}">
     <time class="event-time" datetime="${escapeHtml(event.at ?? "")}">${escapeHtml(formatTime(event.at))}</time>
     ${lanes}
@@ -605,7 +692,7 @@ function renderSequenceEvent(event: SequenceEvent): string {
   </div>`;
 }
 
-function renderStepButton(step: Record<string, unknown>): string {
+function renderStepButton(resource: DashboardResource, step: Record<string, unknown>): string {
   const sequence = displayValue(step.step_sequence);
   const visualStatus = stepEventStatus(step);
   const status = displayValue(step.status);
@@ -615,12 +702,12 @@ function renderStepButton(step: Record<string, unknown>): string {
   const detail = `${displayValue(estimatedFrom.amount)} ${displayValue(estimatedFrom.currency)} → ${displayValue(estimatedTo.amount)} ${displayValue(estimatedTo.currency)}`;
   return `<button class="stage" data-step-id="${escapeHtml(stepId)}">
     <span class="stage-top"><span class="stage-number">Step ${escapeHtml(sequence)}</span><span class="stage-status event-${visualStatus}">${escapeHtml(status)}</span></span>
-    <span class="stage-title">${escapeHtml(businessStepTitle(step))}</span>
+    <span class="stage-title">${escapeHtml(businessStepTitle(resource, step))}</span>
     <span class="stage-detail">${escapeHtml(detail)}</span>
   </button>`;
 }
 
-function renderStepTemplate(step: Record<string, unknown>): string {
+function renderStepTemplate(resource: DashboardResource, step: Record<string, unknown>): string {
   const stepId = text(step.id);
   const sequence = displayValue(step.step_sequence);
   const provider = displayValue(step.provider_key);
@@ -654,7 +741,7 @@ function renderStepTemplate(step: Record<string, unknown>): string {
     .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(displayValue(value))}</dd>`)
     .join("");
   const rawStep = escapeHtml(JSON.stringify(step, null, 2));
-  return `<template data-step-template="${escapeHtml(stepId)}" data-step-title="Step ${escapeHtml(sequence)} · ${escapeHtml(businessStepTitle(step))}">
+  return `<template data-step-template="${escapeHtml(stepId)}" data-step-title="Step ${escapeHtml(sequence)} · ${escapeHtml(businessStepTitle(resource, step))}">
     <dl class="detail-grid">${details}</dl>
     ${hashHtml}
     ${reasons}
@@ -681,7 +768,11 @@ function renderFailure(failure: FailureSummary, error?: string): string {
   </section>`;
 }
 
-function failureSummary(steps: Record<string, unknown>[], error?: string): FailureSummary | undefined {
+function failureSummary(
+  resource: DashboardResource,
+  steps: Record<string, unknown>[],
+  error?: string,
+): FailureSummary | undefined {
   const reasons = steps.flatMap((step) => statusReasons(step));
   const rootReason = reasons.find((reason) => text(reason.error_code) !== "transfers-9201") ?? reasons[0];
   const code = text(rootReason?.error_code);
@@ -692,8 +783,8 @@ function failureSummary(steps: Record<string, unknown>[], error?: string): Failu
     return {
       code,
       title: "Nonce queue timed out",
-      message: `This transaction used nonce ${nonce ?? "ahead of the queue"}, but nonce ${previousNonce} from an earlier transfer was never submitted. Nothing from this withdrawal was broadcast to the blockchain.`,
-      action: "Create a new withdrawal. This failed withdrawal cannot be resumed.",
+      message: `This transaction used nonce ${nonce ?? "ahead of the queue"}, but nonce ${previousNonce} from an earlier transfer was never submitted. Nothing from this ${resource} was broadcast to the blockchain.`,
+      action: `Create a new ${resource}. This failed ${resource} cannot be resumed.`,
     };
   }
   if (code === "transfers-9312") {
@@ -701,20 +792,20 @@ function failureSummary(steps: Record<string, unknown>[], error?: string): Failu
       code,
       title: "An earlier wallet transfer failed",
       message: "This transaction's place in the wallet nonce queue became invalid before it could be broadcast.",
-      action: "Create a new withdrawal after the failed wallet queue has cleared.",
+      action: `Create a new ${resource} after the failed wallet queue has cleared.`,
     };
   }
   if (rootReason) {
     return {
       code: code || undefined,
-      title: "Withdrawal step failed",
-      message: message || "A transfer step failed before the withdrawal completed.",
-      action: "Review the failed step details before creating another withdrawal.",
+      title: `${capitalize(resource)} step failed`,
+      message: message || `A transfer step failed before the ${resource} completed.`,
+      action: `Review the failed step details before creating another ${resource}.`,
     };
   }
   if (error) {
     return {
-      title: "Withdrawal stopped",
+      title: `${capitalize(resource)} stopped`,
       message: firstSentence(error),
       action: "Review the technical error and the last completed event before retrying.",
     };
@@ -764,10 +855,17 @@ function reasonParameterFromMessage(message: string, name: string): string | und
   return new RegExp(`${name}:\\s*([^,\\)]+)`).exec(message)?.[1]?.trim();
 }
 
-function businessStepTitle(step: Record<string, unknown>): string {
+function businessStepTitle(
+  resource: DashboardResource,
+  step: Record<string, unknown>,
+): string {
   const sequence = Number(step.step_sequence ?? 0);
   const type = text(step.step_type).toLowerCase();
-  if (sequence === 1) return "Move funds from source wallet";
+  if (sequence === 1) {
+    return resource === "rebalance"
+      ? "Move funds from wallet to OpenFX ledger"
+      : "Move funds from source wallet";
+  }
   if (type === "swap") return "Convert funds through OpenFX";
   if (sequence >= 3) return "Send funds to destination bank";
   return `${capitalize(type || "Transfer")} funds`;
@@ -789,8 +887,12 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function actorLabel(id: ActorId): string {
-  return actors.find((actor) => actor.id === id)?.shortLabel ?? id;
+function actorsFor(resource: DashboardResource): Actor[] {
+  return resource === "rebalance" ? rebalanceActors : actors;
+}
+
+function actorLabel(resource: DashboardResource, id: ActorId): string {
+  return actorsFor(resource).find((actor) => actor.id === id)?.shortLabel ?? id;
 }
 
 function transactionExplorerUrl(network: string, transactionHash: string): string | undefined {

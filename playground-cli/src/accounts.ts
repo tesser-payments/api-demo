@@ -6,6 +6,7 @@ export type Account = {
   id?: string;
   name?: string;
   type?: string;
+  provider?: string | null;
   tenant_id?: string | null;
   counterparty_id?: string | null;
   is_managed?: boolean;
