@@ -2,11 +2,19 @@ import pc from "picocolors";
 
 const sensitiveNames = new Set([
   "access_token",
+  "api-key",
+  "api-secret",
+  "apikey",
+  "apisecret",
   "authorization",
   "bt-api-key",
   "client_secret",
   "private_key",
   "privatekey",
+  "kraken_api_key",
+  "kraken_api_secret",
+  "krakenapikey",
+  "krakenapisecret",
   "signature",
   "signing_private_key",
   "stamp",
@@ -14,6 +22,7 @@ const sensitiveNames = new Set([
   "token",
   "webhooksecret",
   "webhook_signing_key",
+  "withdrawal_fee_token",
 ]);
 
 export function sanitize(value: unknown, fieldName?: string): unknown {

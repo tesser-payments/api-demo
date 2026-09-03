@@ -4,7 +4,7 @@ import {
   TerminalInteraction,
   type Interaction,
 } from "./interaction.ts";
-import { loadEnvironment } from "./config.ts";
+import { loadEnvironment, type Environment } from "./config.ts";
 import { CancelledError, PlaygroundError, UsageError } from "./errors.ts";
 import { selectEnvironmentFile } from "./environment-selection.ts";
 import { Output } from "./output.ts";
@@ -25,6 +25,21 @@ import {
   showOpenFxWebhookUrl,
   type BankAccountOptions,
 } from "./workflows/openfx.ts";
+import {
+  runKraken,
+  type KrakenOptions,
+  type KrakenRuntime,
+} from "./workflows/kraken.ts";
+import { runKrakenBalances } from "./workflows/kraken-balances.ts";
+import { runKrakenMenu } from "./workflows/kraken-menu.ts";
+import { runKrakenSwap, type KrakenSwapOptions } from "./workflows/kraken-swap.ts";
+import {
+  runKrakenRegisterAddress,
+  runKrakenWithdraw,
+  runKrakenWithdrawMenu,
+  type KrakenRegisterAddressOptions,
+  type KrakenWithdrawOptions,
+} from "./workflows/kraken-withdraw.ts";
 
 type GlobalOptions = {
   envFile?: string;
@@ -34,9 +49,11 @@ type GlobalOptions = {
 };
 
 type Context = {
+  environment: Environment;
   interaction: Interaction;
   output: Output;
   runtime(): Runtime;
+  krakenRuntime(): KrakenRuntime;
 };
 
 const program = new Command()
@@ -161,6 +178,78 @@ program
     }),
   );
 
+const kraken = program
+  .command("kraken")
+  .description("Manage Kraken balances, deposits, swaps, and withdrawals")
+  .action(async (_options: unknown, command: Command) =>
+    runKrakenMenu((await contextFor(command)).krakenRuntime()),
+  );
+
+kraken
+  .command("balances")
+  .description("Show Kraken extended balances")
+  .action(async (_options: unknown, command: Command) => {
+    await runKrakenBalances((await contextFor(command)).krakenRuntime());
+  });
+
+kraken
+  .command("deposit")
+  .description("Detect a Kraken deposit")
+  .option("--asset <asset>", "Kraken fiat deposit asset")
+  .option("--account-id <id>", "Kraken Spot account ID")
+  .option("--method-id <id>", "Kraken deposit funding method ID")
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--validate-only", "Validate configuration without calling Kraken")
+  .action(async (options: KrakenOptions, command: Command) =>
+    runKraken((await contextFor(command)).krakenRuntime(), options),
+  );
+
+kraken
+  .command("swap")
+  .description("Swap USD to USDC using a validated market order")
+  .option("--amount <amount>", "USD amount to spend")
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .action(async (options: KrakenSwapOptions, command: Command) =>
+    runKrakenSwap((await contextFor(command)).krakenRuntime(), options),
+  );
+
+const krakenWithdraw = kraken
+  .command("withdraw")
+  .description("Manage Kraken onchain targets and USDC withdrawals")
+  .action(async (_options: unknown, command: Command) =>
+    runKrakenWithdrawMenu((await contextFor(command)).krakenRuntime()),
+  );
+
+krakenWithdraw
+  .command("register-address")
+  .description("Register a new Kraken onchain target address")
+  .option("--asset <asset>", "Asset", "USDC")
+  .option("--account-id <id>", "Kraken Spot account ID")
+  .option("--method-id <id>", "Kraken withdrawal funding method ID")
+  .option("--address <address>", "Onchain target address")
+  .option("--name <name>", "Target address name")
+  .option("--memo <memo>", "Optional memo or tag")
+  .action(async (options: KrakenRegisterAddressOptions, command: Command) =>
+    runKrakenRegisterAddress((await contextFor(command)).krakenRuntime(), options),
+  );
+
+krakenWithdraw
+  .command("send")
+  .description("Withdraw to an existing Kraken onchain target")
+  .option("--asset <asset>", "Asset", "USDC")
+  .option("--account-id <id>", "Kraken Spot account ID")
+  .option("--method-id <id>", "Kraken withdrawal funding method ID")
+  .option("--address-id <id>", "Existing Kraken target address ID")
+  .option("--amount <amount>", "Withdrawal amount")
+  .addOption(new Option("--fee-mode <mode>", "Amount behavior").choices(["total", "receive"]))
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .action(async (options: KrakenWithdrawOptions, command: Command) =>
+    runKrakenWithdraw((await contextFor(command)).krakenRuntime(), options),
+  );
+
 const openFx = program.command("openfx").description("Manage the OpenFX integration");
 
 openFx
@@ -217,6 +306,7 @@ async function runInteractiveMenu(context: Context): Promise<void> {
       { name: "Run an OpenFX rebalance", value: "rebalance" },
       { name: "Show a wallet address", value: "wallet" },
       { name: "Simulate inbound payments", value: "simulate" },
+      { name: "Kraken", value: "kraken" },
       { name: "Register OpenFX credentials", value: "openfx-register" },
       { name: "Show the OpenFX webhook URL", value: "openfx-webhook" },
       { name: "Patch OpenFX credentials in Basis Theory", value: "openfx-patch" },
@@ -225,17 +315,20 @@ async function runInteractiveMenu(context: Context): Promise<void> {
     ]);
     if (selected === "exit") return;
     try {
-      const runtime = context.runtime();
-      if (selected === "request") await runRequest(runtime, undefined, undefined, {});
-      if (selected === "payment") await runPayment(runtime, undefined, {});
-      if (selected === "withdrawal") await runWithdrawal(runtime, {});
-      if (selected === "rebalance") await runRebalance(runtime, {});
-      if (selected === "wallet") await runWalletAddress(runtime, {});
-      if (selected === "simulate") await runSimulateInbound(runtime, {});
-      if (selected === "openfx-register") await registerOpenFx(runtime, undefined);
-      if (selected === "openfx-webhook") await showOpenFxWebhookUrl(runtime);
-      if (selected === "openfx-patch") await patchBasisTheory(runtime, undefined);
-      if (selected === "openfx-bank") await createBankAccount(runtime, {});
+      if (selected === "kraken") await runKrakenMenu(context.krakenRuntime());
+      if (selected !== "kraken") {
+        const runtime = context.runtime();
+        if (selected === "request") await runRequest(runtime, undefined, undefined, {});
+        if (selected === "payment") await runPayment(runtime, undefined, {});
+        if (selected === "withdrawal") await runWithdrawal(runtime, {});
+        if (selected === "rebalance") await runRebalance(runtime, {});
+        if (selected === "wallet") await runWalletAddress(runtime, {});
+        if (selected === "simulate") await runSimulateInbound(runtime, {});
+        if (selected === "openfx-register") await registerOpenFx(runtime, undefined);
+        if (selected === "openfx-webhook") await showOpenFxWebhookUrl(runtime);
+        if (selected === "openfx-patch") await patchBasisTheory(runtime, undefined);
+        if (selected === "openfx-bank") await createBankAccount(runtime, {});
+      }
     } catch (error) {
       if (error instanceof CancelledError) context.output.info(error.message);
       else if (error instanceof Error) context.output.error(error.message);
@@ -255,9 +348,11 @@ async function contextFor(command: Command): Promise<Context> {
   );
   const environment = loadEnvironment(envFile);
   return {
+    environment,
     interaction,
     output,
     runtime: () => createRuntime(environment, interaction, output),
+    krakenRuntime: () => ({ environment, interaction, output }),
   };
 }
 

@@ -21,6 +21,13 @@ const signingSchema = z.object({
   SIGNING_ENCLAVE_ID: z.string().min(1),
 });
 
+const krakenSchema = z.object({
+  KRAKEN_API_KEY: z.string().min(1),
+  KRAKEN_API_SECRET: z.string().min(1),
+  KRAKEN_BASE_URL: z.url().default("https://api.kraken.com"),
+  KRAKEN_REQUEST_TIMEOUT_SECONDS: z.coerce.number().positive().default(30),
+});
+
 export type TesserConfiguration = {
   baseUrl: string;
   authUrl: string;
@@ -34,6 +41,13 @@ export type SigningConfiguration = {
   publicKey: string;
   privateKey: string;
   enclaveId: string;
+};
+
+export type KrakenConfiguration = {
+  apiKey: string;
+  apiSecret: string;
+  baseUrl: string;
+  timeoutSeconds: number;
 };
 
 function validationMessage(error: z.ZodError): string {
@@ -87,6 +101,19 @@ export function getSigningConfiguration(environment: Environment): SigningConfig
     publicKey: result.data.SIGNING_PUBLIC_KEY,
     privateKey: result.data.SIGNING_PRIVATE_KEY,
     enclaveId: result.data.SIGNING_ENCLAVE_ID,
+  };
+}
+
+export function getKrakenConfiguration(environment: Environment): KrakenConfiguration {
+  const result = krakenSchema.safeParse(environment);
+  if (!result.success) {
+    throw new UsageError(`Invalid Kraken configuration: ${validationMessage(result.error)}`);
+  }
+  return {
+    apiKey: result.data.KRAKEN_API_KEY,
+    apiSecret: result.data.KRAKEN_API_SECRET,
+    baseUrl: result.data.KRAKEN_BASE_URL.replace(/\/$/, ""),
+    timeoutSeconds: result.data.KRAKEN_REQUEST_TIMEOUT_SECONDS,
   };
 }
 
