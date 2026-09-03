@@ -3,6 +3,7 @@ import pc from "picocolors";
 const sensitiveNames = new Set([
   "access_token",
   "api-key",
+  "api-sign",
   "api-secret",
   "apikey",
   "apisecret",
@@ -28,7 +29,10 @@ const sensitiveNames = new Set([
 export function sanitize(value: unknown, fieldName?: string): unknown {
   const normalized = fieldName?.toLowerCase();
   if (normalized && sensitiveNames.has(normalized)) return "<redacted>";
-  if (normalized === "bank_account_number" && typeof value === "string") {
+  if (
+    (normalized === "bank_account_number" || normalized === "bankaccountnumber") &&
+    typeof value === "string"
+  ) {
     return `${"•".repeat(Math.max(0, value.length - 4))}${value.slice(-4)}`;
   }
   if (normalized === "unsigned_transaction" && typeof value === "string") {
@@ -55,12 +59,8 @@ export class Output {
   }
 
   progress(event: string, values: Record<string, unknown> = {}): void {
-    if (this.format === "json" && !this.verbose) return;
+    if (this.verbose || this.format === "json") return;
     const payload = sanitize({ event, ...values });
-    if (this.verbose) {
-      process.stderr.write(`${JSON.stringify(payload, null, 2)}\n`);
-      return;
-    }
     const fields = Object.entries(payload as Record<string, unknown>)
       .filter(([name]) => name !== "event")
       .map(([name, value]) => `${name}=${compact(value)}`)

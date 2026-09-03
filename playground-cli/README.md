@@ -41,6 +41,10 @@ Precedence is command options, calling-process environment, selected env file, t
 ./cli --env-file sandbox.env withdrawal --with-ui
 ./cli --env-file sandbox.env rebalance --with-ui
 ./cli --env-file sandbox.env kraken
+./cli --env-file staging.env kraken deposit --with-ui
+./cli --env-file staging.env kraken funding deposit --with-ui
+./cli --env-file staging.env kraken swap --with-ui
+./cli --env-file staging.env kraken withdraw send --with-ui
 ```
 
 With no command, the CLI opens a command menu. Explicit commands prompt for missing values and confirm mutations.
@@ -60,16 +64,50 @@ wallet transaction locally, waits for the matching OpenFX sandbox mock deposit, 
 then follows any ledger swap through completion. Its live UI is written to
 `ui/rebalance/index.html` and shows the mock-deposit boundary in the sequence diagram.
 
-The Kraken menu provides balances, deposits, USD-to-USDC market swaps, and USDC
-withdrawals. Deposit detection and withdrawals use Funding Beta; balances and swaps
-use Spot REST. Add `KRAKEN_API_KEY` and `KRAKEN_API_SECRET` to the selected environment
-file. Enable Query Funds, Deposit Funds, Create/Modify Orders, Query Open Orders,
-Query Closed Orders, Withdraw Funds, and Add Withdrawal Addresses for every workflow.
+The Kraken menu registers Kraken secrets with Tesser, runs end-to-end BRL deposits,
+shows balances, performs USD-to-USDC market swaps, and sends USDC withdrawals. Direct
+deposit diagnostics and withdrawals use Funding Beta; balances and swaps use Spot REST.
+Add `KRAKEN_API_KEY` and `KRAKEN_API_SECRET` to the selected environment file. Enable
+Query Funds and Deposit Funds for registration and BRL deposits. Enable Create/Modify
+Orders, Query Open Orders, Query Closed Orders, Withdraw Funds, and Add Withdrawal
+Addresses for the other direct Kraken workflows.
+Set `KRAKEN_BASE_URL` in each environment that needs a different Kraken API endpoint.
+An unset or empty value uses `https://api.kraken.com`.
 
-`Pix (PayAmigo)` deposits are completed in Kraken Web and detected through Funding
-Beta. Swap validates the market order before asking for confirmation. Withdraw has a
-submenu for registering a new onchain target or sending to an existing verified target.
-Registering a target returns to the withdrawal submenu and does not move funds.
+`kraken register_secrets` claims the first CAD method's instructions or reads normalized
+instructions from `--cad-instructions-file`, then registers the credentials through
+Tesser. `kraken deposit` creates the Tesser BRL plan, verifies the non-payable Staging
+instructions, pauses for the real `Pix (PayAmigo)` deposit in Kraken Web, and polls
+Tesser until reconciliation completes. Swap validates the market order before asking
+for confirmation. Withdraw has a submenu for registering a new onchain target or
+sending to an existing verified target. Registering a target returns to the withdrawal
+submenu and does not move funds.
+
+The Tesser BRL deposit, direct Funding API deposit, swap, and withdrawal send flows ask
+whether to enable a live UI, defaulting to disabled. Pass `--with-ui` to skip the prompt.
+Their dashboards are written under `ui/kraken/<command>/index.html` and update while
+the CLI polls Kraken or Tesser.
+
+```bash
+./cli --env-file staging.env kraken register_secrets
+./cli --env-file staging.env kraken deposit --amount 50.00
+```
+
+Non-interactive registration requires a normalized CAD instructions file:
+
+```json
+{
+  "methodId": "<first-cad-method-id>",
+  "bankName": "<bank-name>",
+  "bankAccountNumber": "<account-number>",
+  "bankCodeType": "<code-type>",
+  "bankIdentifierCode": "<identifier>",
+  "bankSwiftCode": null,
+  "beneficiaryName": "<beneficiary>",
+  "beneficiaryAddress": null,
+  "trackingReference": null
+}
+```
 
 ## Non-interactive mode
 
@@ -95,14 +133,19 @@ Without `--env-file`, it uses only the calling-process environment.
 ./cli simulate-inbound
 ./cli kraken
 ./cli kraken balances
-./cli kraken deposit
-./cli kraken swap
+./cli kraken register_secrets
+./cli kraken deposit [--with-ui]
+./cli kraken deposit --deposit-id [tesser-deposit-id]
+./cli kraken funding deposit [--with-ui]
+./cli kraken funding deposit show [kraken-deposit-id]
+./cli kraken swap [--with-ui]
 ./cli kraken withdraw
 ./cli kraken withdraw register-address
-./cli kraken withdraw send
+./cli kraken withdraw send [--with-ui]
 ./cli openfx register [api-key-file]
 ./cli openfx webhook-url
 ./cli openfx patch-basis-theory
+./cli openfx delete-basis-theory
 ./cli openfx create-bank-account
 ```
 

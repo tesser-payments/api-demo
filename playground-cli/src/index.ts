@@ -1,9 +1,5 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
-import {
-  NonInteractiveInteraction,
-  TerminalInteraction,
-  type Interaction,
-} from "./interaction.ts";
+import { NonInteractiveInteraction, TerminalInteraction, type Interaction } from "./interaction.ts";
 import { loadEnvironment, type Environment } from "./config.ts";
 import { CancelledError, PlaygroundError, UsageError } from "./errors.ts";
 import { selectEnvironmentFile } from "./environment-selection.ts";
@@ -14,24 +10,21 @@ import { runPayment, type PaymentOptions } from "./workflows/payment.ts";
 import { runWithdrawal, type WithdrawalOptions } from "./workflows/withdrawal.ts";
 import { runRebalance, type RebalanceOptions } from "./workflows/rebalance.ts";
 import { runWalletAddress, type WalletOptions } from "./workflows/wallet.ts";
-import {
-  runSimulateInbound,
-  type SimulateInboundOptions,
-} from "./workflows/simulate-inbound.ts";
+import { runSimulateInbound, type SimulateInboundOptions } from "./workflows/simulate-inbound.ts";
 import {
   createBankAccount,
+  deleteBasisTheory,
   patchBasisTheory,
   registerOpenFx,
   showOpenFxWebhookUrl,
   type BankAccountOptions,
 } from "./workflows/openfx.ts";
-import {
-  runKraken,
-  type KrakenOptions,
-  type KrakenRuntime,
-} from "./workflows/kraken.ts";
+import { runKraken, type KrakenOptions, type KrakenRuntime } from "./workflows/kraken.ts";
+import { runKrakenDeposit, type KrakenDepositOptions } from "./workflows/kraken-e2e-deposit.ts";
 import { runKrakenBalances } from "./workflows/kraken-balances.ts";
+import { runKrakenDepositShow, type KrakenDepositShowOptions } from "./workflows/kraken-deposit.ts";
 import { runKrakenMenu } from "./workflows/kraken-menu.ts";
+import { runKrakenRegisterSecrets, type KrakenRegisterSecretsOptions } from "./workflows/kraken-register-secrets.ts";
 import { runKrakenSwap, type KrakenSwapOptions } from "./workflows/kraken-swap.ts";
 import {
   runKrakenRegisterAddress,
@@ -61,11 +54,7 @@ const program = new Command()
   .description("Interactive and scriptable playground for the Tesser API")
   .option("--env-file <path>", "Load configuration from this file only")
   .option("--non-interactive", "Never prompt or read from the terminal")
-  .addOption(
-    new Option("--output <format>", "Output format")
-      .choices(["human", "json"])
-      .default("human"),
-  )
+  .addOption(new Option("--output <format>", "Output format").choices(["human", "json"]).default("human"))
   .option("-v, --verbose", "Print complete sanitized requests and responses")
   .showHelpAfterError()
   .exitOverride();
@@ -80,12 +69,8 @@ program
   .option("-d, --data <json>", "JSON request body")
   .option("-f, --data-file <path>", "JSON body file, or - for stdin")
   .action(
-    async (
-      method: string | undefined,
-      path: string | undefined,
-      options: RequestCommandOptions,
-      command: Command,
-    ) => runRequest((await contextFor(command)).runtime(), method, path, options),
+    async (method: string | undefined, path: string | undefined, options: RequestCommandOptions, command: Command) =>
+      runRequest((await contextFor(command)).runtime(), method, path, options),
   );
 
 program
@@ -104,12 +89,8 @@ program
   .option("--organization-reference-id <id>", "Payment organization reference")
   .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
-  .action(
-    async (
-      destinationWalletAddress: string | undefined,
-      options: PaymentOptions,
-      command: Command,
-    ) => runPayment((await contextFor(command)).runtime(), destinationWalletAddress, options),
+  .action(async (destinationWalletAddress: string | undefined, options: PaymentOptions, command: Command) =>
+    runPayment((await contextFor(command)).runtime(), destinationWalletAddress, options),
   );
 
 program
@@ -170,19 +151,32 @@ program
   .option("--risk-status <status>", "Mocked risk status")
   .option("--count <count>", "Number of simulations", integerOption, 1)
   .option("-y, --yes", "Skip the batch confirmation")
-  .action(async (options: SimulateInboundOptions & { toAccount?: string; riskStatus?: string }, command: Command) =>
-    runSimulateInbound((await contextFor(command)).runtime(), {
-      ...options,
-      walletId: options.walletId ?? options.toAccount,
-      mockedRiskStatus: options.riskStatus ?? options.mockedRiskStatus,
-    }),
+  .action(
+    async (
+      options: SimulateInboundOptions & {
+        toAccount?: string;
+        riskStatus?: string;
+      },
+      command: Command,
+    ) =>
+      runSimulateInbound((await contextFor(command)).runtime(), {
+        ...options,
+        walletId: options.walletId ?? options.toAccount,
+        mockedRiskStatus: options.riskStatus ?? options.mockedRiskStatus,
+      }),
   );
 
 const kraken = program
   .command("kraken")
   .description("Manage Kraken balances, deposits, swaps, and withdrawals")
-  .action(async (_options: unknown, command: Command) =>
-    runKrakenMenu((await contextFor(command)).krakenRuntime()),
+  .action(async (_options: unknown, command: Command) => runKrakenMenu((await contextFor(command)).runtime()));
+
+kraken
+  .command("register_secrets")
+  .description("Register Kraken credentials and CAD instructions with Tesser")
+  .option("--cad-instructions-file <path>", "Normalized Kraken CAD deposit instructions JSON")
+  .action(async (options: KrakenRegisterSecretsOptions, command: Command) =>
+    runKrakenRegisterSecrets((await contextFor(command)).runtime(), options),
   );
 
 kraken
@@ -194,16 +188,44 @@ kraken
 
 kraken
   .command("deposit")
-  .description("Detect a Kraken deposit")
+  .description("Create or resume a Tesser BRL deposit into Kraken")
+  .option("--deposit-id <id>", "Resume an existing Tesser deposit")
+  .option("--source-bank-id <id>", "Workspace source bank account ID")
+  .option("--kraken-ledger-id <id>", "Managed Kraken ledger account ID")
+  .option("--amount <amount>", "Exact BRL amount")
+  .option("--organization-reference-id <id>", "Deposit organization reference")
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--plan-only", "Create and verify the deposit plan, then exit")
+  .option("--validate-only", "Validate configuration without calling an API")
+  .option("--with-ui", "Write a live HTML Kraken deposit dashboard")
+  .action(async (options: KrakenDepositOptions, command: Command) =>
+    runKrakenDeposit((await contextFor(command)).runtime(), options),
+  );
+
+const krakenFunding = kraken.command("funding").description("Run direct Kraken Funding API diagnostics");
+
+const krakenFundingDeposit = krakenFunding
+  .command("deposit")
+  .description("Detect a deposit directly through the Kraken Funding API")
   .option("--asset <asset>", "Kraken fiat deposit asset")
-  .option("--account-id <id>", "Kraken Spot account ID")
   .option("--method-id <id>", "Kraken deposit funding method ID")
   .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
   .option("--validate-only", "Validate configuration without calling Kraken")
+  .option("--with-ui", "Write a live HTML Kraken funding deposit dashboard")
   .action(async (options: KrakenOptions, command: Command) =>
     runKraken((await contextFor(command)).krakenRuntime(), options),
   );
+
+krakenFundingDeposit
+  .command("show")
+  .description("Show an existing Kraken funding deposit")
+  .argument("[deposit-id]", "Kraken funding deposit ID")
+  .option("--account-id <id>", "Kraken Spot account ID")
+  .action(async (depositId: string | undefined, options: KrakenDepositShowOptions, command: Command) => {
+    await runKrakenDepositShow((await contextFor(command)).krakenRuntime(), depositId, options);
+  });
 
 kraken
   .command("swap")
@@ -211,6 +233,7 @@ kraken
   .option("--amount <amount>", "USD amount to spend")
   .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--with-ui", "Write a live HTML Kraken swap dashboard")
   .action(async (options: KrakenSwapOptions, command: Command) =>
     runKrakenSwap((await contextFor(command)).krakenRuntime(), options),
   );
@@ -246,6 +269,7 @@ krakenWithdraw
   .addOption(new Option("--fee-mode <mode>", "Amount behavior").choices(["total", "receive"]))
   .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--with-ui", "Write a live HTML Kraken withdrawal dashboard")
   .action(async (options: KrakenWithdrawOptions, command: Command) =>
     runKrakenWithdraw((await contextFor(command)).krakenRuntime(), options),
   );
@@ -263,9 +287,7 @@ openFx
 openFx
   .command("webhook-url")
   .description("Print the OpenFX webhook URL for this workspace")
-  .action(async (_options: unknown, command: Command) =>
-    showOpenFxWebhookUrl((await contextFor(command)).runtime()),
-  );
+  .action(async (_options: unknown, command: Command) => showOpenFxWebhookUrl((await contextFor(command)).runtime()));
 
 openFx
   .command("patch-basis-theory")
@@ -273,6 +295,14 @@ openFx
   .option("--token <token>", "Basis Theory token override")
   .action(async (options: { token?: string }, command: Command) =>
     patchBasisTheory((await contextFor(command)).runtime(), options.token),
+  );
+
+openFx
+  .command("delete-basis-theory")
+  .description("Delete a Basis Theory token")
+  .option("--token <token>", "Basis Theory token override")
+  .action(async (options: { token?: string }, command: Command) =>
+    deleteBasisTheory((await contextFor(command)).runtime(), options.token),
   );
 
 openFx
@@ -309,13 +339,17 @@ async function runInteractiveMenu(context: Context): Promise<void> {
       { name: "Kraken", value: "kraken" },
       { name: "Register OpenFX credentials", value: "openfx-register" },
       { name: "Show the OpenFX webhook URL", value: "openfx-webhook" },
-      { name: "Patch OpenFX credentials in Basis Theory", value: "openfx-patch" },
+      {
+        name: "Patch OpenFX credentials in Basis Theory",
+        value: "openfx-patch",
+      },
+      { name: "Delete a Basis Theory token", value: "openfx-delete" },
       { name: "Create an OpenFX bank account", value: "openfx-bank" },
       { name: "Exit", value: "exit" },
     ]);
     if (selected === "exit") return;
     try {
-      if (selected === "kraken") await runKrakenMenu(context.krakenRuntime());
+      if (selected === "kraken") await runKrakenMenu(context.runtime());
       if (selected !== "kraken") {
         const runtime = context.runtime();
         if (selected === "request") await runRequest(runtime, undefined, undefined, {});
@@ -327,6 +361,7 @@ async function runInteractiveMenu(context: Context): Promise<void> {
         if (selected === "openfx-register") await registerOpenFx(runtime, undefined);
         if (selected === "openfx-webhook") await showOpenFxWebhookUrl(runtime);
         if (selected === "openfx-patch") await patchBasisTheory(runtime, undefined);
+        if (selected === "openfx-delete") await deleteBasisTheory(runtime, undefined);
         if (selected === "openfx-bank") await createBankAccount(runtime, {});
       }
     } catch (error) {
@@ -339,13 +374,9 @@ async function runInteractiveMenu(context: Context): Promise<void> {
 
 async function contextFor(command: Command): Promise<Context> {
   const options = command.optsWithGlobals<GlobalOptions>();
-  const interaction = options.nonInteractive
-    ? new NonInteractiveInteraction()
-    : new TerminalInteraction();
+  const interaction = options.nonInteractive ? new NonInteractiveInteraction() : new TerminalInteraction();
   const output = new Output(options.output, Boolean(options.verbose));
-  const envFile = options.envFile ?? (
-    interaction.interactive ? await selectEnvironmentFile(interaction) : undefined
-  );
+  const envFile = options.envFile ?? (interaction.interactive ? await selectEnvironmentFile(interaction) : undefined);
   const environment = loadEnvironment(envFile);
   return {
     environment,

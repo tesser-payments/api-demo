@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Environment } from "../src/config.ts";
+import type { TesserClient } from "../src/http.ts";
 import type { Choice, Interaction } from "../src/interaction.ts";
 import { Output } from "../src/output.ts";
+import type { Runtime } from "../src/runtime.ts";
 import type { KrakenRuntime } from "../src/workflows/kraken.ts";
 import { runKrakenMenu } from "../src/workflows/kraken-menu.ts";
 import { runKrakenWithdrawMenu } from "../src/workflows/kraken-withdraw.ts";
@@ -14,8 +16,10 @@ describe("Kraken menus", () => {
 
     expect(interaction.labels).toEqual(["Kraken"]);
     expect(interaction.choiceNames).toEqual([
+      "Register secrets",
+      "BRL deposit through Tesser",
       "Balances",
-      "Deposit",
+      "Direct Funding API deposit",
       "Swap USD to USDC",
       "Withdraw USDC",
       "Back",
@@ -70,10 +74,11 @@ class BackInteraction implements Interaction {
   }
 }
 
-function runtime(interaction: Interaction): KrakenRuntime {
+function runtime(interaction: Interaction): Runtime & KrakenRuntime {
   return {
     environment: {} as Environment,
     interaction,
     output: new Output("json", false),
+    client: {} as TesserClient,
   };
 }

@@ -14,7 +14,7 @@ export type Account = {
   workspace_id?: string;
   assets?: Array<{
     currency?: string;
-    network?: string;
+    network?: string | null;
     available_balance?: string;
   }>;
   [key: string]: unknown;

@@ -54,13 +54,27 @@ describe("environment loading", () => {
     expect(configuration.timeoutSeconds).toBe(30);
   });
 
-  test("uses the live Kraken Spot API by default", () => {
+  test.each([undefined, "", "   "])(
+    "uses the live Kraken API when the configured URL is %j",
+    (baseUrl) => {
+      const configuration = getKrakenConfiguration({
+        KRAKEN_API_KEY: "api-key",
+        KRAKEN_API_SECRET: "api-secret",
+        KRAKEN_BASE_URL: baseUrl,
+      });
+
+      expect(configuration.baseUrl).toBe("https://api.kraken.com");
+      expect(configuration.timeoutSeconds).toBe(30);
+    },
+  );
+
+  test("uses the Kraken API URL configured by the selected environment", () => {
     const configuration = getKrakenConfiguration({
       KRAKEN_API_KEY: "api-key",
       KRAKEN_API_SECRET: "api-secret",
+      KRAKEN_BASE_URL: "https://sandbox.kraken.example/",
     });
 
-    expect(configuration.baseUrl).toBe("https://api.kraken.com");
-    expect(configuration.timeoutSeconds).toBe(30);
+    expect(configuration.baseUrl).toBe("https://sandbox.kraken.example");
   });
 });

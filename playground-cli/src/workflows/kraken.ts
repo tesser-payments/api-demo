@@ -1,15 +1,8 @@
-import {
-  firstValue,
-  getKrakenConfiguration,
-  positiveNumber,
-  type Environment,
-} from "../config.ts";
+import { firstValue, getKrakenConfiguration, positiveNumber, type Environment } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
-import {
-  KrakenFundingClient,
-  type KrakenFundingApi,
-} from "../kraken.ts";
+import { KrakenFundingClient, type KrakenFundingApi } from "../kraken.ts";
 import type { Interaction } from "../interaction.ts";
+import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
 import { sanitize, type Output } from "../output.ts";
 
 type KrakenAsset = {
@@ -26,7 +19,12 @@ type KrakenFundingMethod = {
     network_id?: string;
     network_name?: string;
   } | null;
-  deposit?: Record<string, unknown>;
+  deposit?: {
+    address_generation?: {
+      status?: string;
+    };
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 };
 
@@ -43,16 +41,15 @@ type KrakenDeposit = {
 
 export type KrakenOptions = {
   asset?: string;
-  accountId?: string;
   methodId?: string;
   pollIntervalSeconds?: number;
   timeoutSeconds?: number;
   validateOnly?: boolean;
+  withUi?: boolean;
 };
 
 export type KrakenEnvironment = {
   asset: string;
-  accountId?: string;
   methodId?: string;
   pollIntervalSeconds: number;
   timeoutSeconds: number;
@@ -71,116 +68,164 @@ export async function runKraken(
 ): Promise<void> {
   const environment = resolveKrakenEnvironment(runtime.environment, options);
   const configuration = getKrakenConfiguration(runtime.environment);
-  if (runtime.interaction.interactive && !options.validateOnly) {
-    await configureKrakenEnvironment(runtime, environment);
+  const withUi = await resolveKrakenUi(runtime.interaction, options.withUi, "funding-deposit", options.validateOnly);
+  const dashboard = withUi ? new KrakenDashboard("funding-deposit") : undefined;
+  dashboard?.start();
+  if (dashboard) runtime.output.info(`Kraken funding deposit UI: ${dashboard.outputPath}`);
+  try {
+    dashboard?.update("configure", "Reviewing the Kraken funding deposit values", {
+      asset: environment.asset,
+      methodId: environment.methodId,
+      baseUrl: configuration.baseUrl,
+    });
+    if (runtime.interaction.interactive && !options.validateOnly) {
+      await configureKrakenEnvironment(runtime, environment);
+    }
+    dashboard?.update("configure", "Reviewed the Kraken funding deposit values", {
+      asset: environment.asset,
+      methodId: environment.methodId,
+      baseUrl: configuration.baseUrl,
+    });
+    if (options.validateOnly) {
+      showKrakenEnvironment(runtime, configuration.baseUrl, environment);
+      dashboard?.complete({ valid: true });
+      runtime.output.result({ valid: true });
+      return;
+    }
+    showKrakenEnvironment(runtime, configuration.baseUrl, environment);
+    const client = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
+    dashboard?.update("method", "Loading Kraken deposit funding methods", {
+      asset: environment.asset,
+    });
+    const methodsResponse = await client.request("GET", "/funding/v1/methods/deposit", {
+      query: {
+        asset: { class: "currency", name: environment.asset },
+        limit: 500,
+      },
+      operation: "List Kraken deposit funding methods",
+    });
+    const methods = requireArray<KrakenFundingMethod>(
+      methodsResponse.methods,
+      "Kraken funding-method response did not contain methods",
+    ).filter((method) => method.asset?.name?.toUpperCase() === environment.asset);
+    if (!methods.length) {
+      showCompleteRecord(runtime, "kraken.deposit-methods.unavailable", methodsResponse);
+      throw new UsageError(`Kraken returned no ${environment.asset} deposit funding methods`);
+    }
+    const selectedMethod = await selectFundingMethod(runtime, methods, environment.asset, environment.methodId);
+    const methodId = requireText(selectedMethod.method_id, "Selected Kraken method has no method_id");
+    dashboard?.update("method", "Selected the Kraken deposit funding method", selectedMethod);
+    const probeStartedAt = new Date().toISOString();
+    runtime.output.progress("kraken.deposit-method.selected", {
+      methodId,
+      methodName: selectedMethod.method_name,
+      minimumAmount: selectedMethod.minimum_amount,
+      networkId: selectedMethod.network?.network_id,
+      networkName: selectedMethod.network?.network_name,
+    });
+    dashboard?.update("baseline", "Recording existing Kraken deposits", {
+      methodId,
+      probeStartedAt,
+    });
+    const baselineResponse = await listDeposits(client, methodId);
+    const baselineDeposits = depositsFrom(baselineResponse);
+    const baselineDepositIds = new Set(
+      baselineDeposits
+        .map((deposit) => deposit.deposit_id)
+        .filter((depositId): depositId is string => Boolean(depositId)),
+    );
+    runtime.output.progress("kraken.deposit-baseline.recorded", {
+      methodId,
+      probeStartedAt,
+      depositCount: baselineDeposits.length,
+    });
+    if (!supportsDepositAddressGeneration(selectedMethod)) {
+      const methodName = selectedMethod.method_name ?? "the selected method";
+      runtime.output.info(
+        [
+          `Complete the ${environment.asset} deposit using ${methodName} in Kraken Web:`,
+          "https://www.kraken.com/c",
+          "Complete the deposit there before continuing.",
+        ].join("\n"),
+      );
+      dashboard?.update(
+        "instructions",
+        "Complete the deposit in Kraken Web",
+        selectedMethod,
+        `${environment.asset} via ${methodName}`,
+      );
+      await waitForManualDeposit(runtime, environment.asset, methodName);
+    } else {
+      dashboard?.update("instructions", "Claiming Kraken deposit instructions", selectedMethod);
+      await runtime.interaction.approve("Claim Kraken deposit instructions?");
+      let claimResponse: Record<string, unknown>;
+      try {
+        claimResponse = await client.request("PUT", "/funding/v1/deposit/address", {
+          body: { method_id: methodId },
+          operation: "Claim Kraken deposit instructions",
+        });
+      } catch (error) {
+        if (error instanceof ApiError) {
+          showCompleteRecord(runtime, "kraken.deposit-instructions.unavailable", {
+            status: error.status,
+            response: error.body,
+          });
+        }
+        throw error;
+      }
+      showCompleteRecord(runtime, "kraken.deposit-instructions.claimed", claimResponse);
+      dashboard?.update("instructions", "Kraken deposit instructions are ready", claimResponse);
+      if (!isRecord(claimResponse.address_details) || !isRecord(claimResponse.address_details.fiat)) {
+        throw new UsageError(
+          `Kraken did not return fiat deposit instructions for the selected ${environment.asset} method`,
+        );
+      }
+      await runtime.interaction.approve("Start polling Kraken after sending the deposit?");
+    }
+    dashboard?.update("detect", "Waiting for a successful Kraken deposit", {
+      methodId,
+      probeStartedAt,
+      baselineDepositIds: [...baselineDepositIds],
+    });
+    const deposit = await waitForSuccessfulDeposit(
+      runtime,
+      client,
+      environment,
+      methodId,
+      probeStartedAt,
+      baselineDepositIds,
+      dashboard,
+    );
+    dashboard?.complete(deposit);
+    if (!runtime.output.verbose) runtime.output.result(deposit);
+  } catch (error) {
+    dashboard?.fail(error instanceof Error ? error.message : String(error));
+    throw error;
   }
+}
+
+function showKrakenEnvironment(runtime: KrakenRuntime, baseUrl: string, environment: KrakenEnvironment): void {
   runtime.output.progress("kraken.environment.validated", {
-    baseUrl: configuration.baseUrl,
+    baseUrl,
     asset: environment.asset,
-    accountId: environment.accountId ?? "Default Kraken Spot account",
     methodId: environment.methodId ?? "Interactive selection",
     pollIntervalSeconds: environment.pollIntervalSeconds,
     timeoutSeconds: environment.timeoutSeconds,
   });
-  if (options.validateOnly) {
-    runtime.output.result({ valid: true });
-    return;
-  }
-  const client = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
-  const methodsResponse = await client.request("GET", "/funding/v1/methods/deposit", {
-    query: {
-      asset: { class: "currency", name: environment.asset },
-      account_id: environment.accountId,
-      limit: 500,
-    },
-    operation: "List Kraken deposit funding methods",
-  });
-  const methods = requireArray<KrakenFundingMethod>(
-    methodsResponse.methods,
-    "Kraken funding-method response did not contain methods",
-  ).filter((method) => method.asset?.name?.toUpperCase() === environment.asset);
-  if (!methods.length) {
-    showCompleteRecord(runtime, "kraken.deposit-methods.unavailable", methodsResponse);
-    throw new UsageError(`Kraken returned no ${environment.asset} deposit funding methods`);
-  }
-  const selectedMethod = await selectFundingMethod(
-    runtime,
-    methods,
-    environment.asset,
-    environment.methodId,
-  );
-  const methodId = requireText(selectedMethod.method_id, "Selected Kraken method has no method_id");
-  const probeStartedAt = new Date().toISOString();
-  runtime.output.progress("kraken.deposit-method.selected", {
-    methodId,
-    methodName: selectedMethod.method_name,
-    minimumAmount: selectedMethod.minimum_amount,
-    networkId: selectedMethod.network?.network_id,
-    networkName: selectedMethod.network?.network_name,
-  });
-  const baselineResponse = await listDeposits(client, environment, methodId);
-  const baselineDeposits = depositsFrom(baselineResponse);
-  const baselineDepositIds = new Set(
-    baselineDeposits
-      .map((deposit) => deposit.deposit_id)
-      .filter((depositId): depositId is string => Boolean(depositId)),
-  );
-  runtime.output.progress("kraken.deposit-baseline.recorded", {
-    methodId,
-    probeStartedAt,
-    depositCount: baselineDeposits.length,
-  });
-  if (selectedMethod.method_name === "Pix (PayAmigo)") {
-    runtime.output.info(
-      [
-        "Complete the BRL deposit using Pix (PayAmigo) in Kraken Web:",
-        "https://www.kraken.com/c",
-        "Generate the PIX code there and complete the transfer before continuing.",
-      ].join("\n"),
-    );
-    await waitForManualPixDeposit(runtime);
-  } else {
-    await runtime.interaction.approve("Claim Kraken deposit instructions?");
-    let claimResponse: Record<string, unknown>;
-    try {
-      claimResponse = await client.request("PUT", "/funding/v1/deposit/address", {
-        query: { account_id: environment.accountId },
-        body: { method_id: methodId },
-        operation: "Claim Kraken deposit instructions",
-      });
-    } catch (error) {
-      if (error instanceof ApiError) {
-        showCompleteRecord(runtime, "kraken.deposit-instructions.unavailable", {
-          status: error.status,
-          response: error.body,
-        });
-      }
-      throw error;
-    }
-    showCompleteRecord(runtime, "kraken.deposit-instructions.claimed", claimResponse);
-    if (!isRecord(claimResponse.address_details) || !isRecord(claimResponse.address_details.fiat)) {
-      throw new UsageError("Kraken did not return fiat deposit instructions for the selected BRL method");
-    }
-    await runtime.interaction.approve("Start polling Kraken after sending the deposit?");
-  }
-  const deposit = await waitForSuccessfulDeposit(
-    runtime,
-    client,
-    environment,
-    methodId,
-    probeStartedAt,
-    baselineDepositIds,
-  );
-  if (!runtime.output.verbose) runtime.output.result(deposit);
 }
 
-async function waitForManualPixDeposit(runtime: KrakenRuntime): Promise<void> {
+function supportsDepositAddressGeneration(method: KrakenFundingMethod): boolean {
+  const status = method.deposit?.address_generation?.status?.toLowerCase();
+  return status === "limited" || status === "unlimited";
+}
+
+async function waitForManualDeposit(runtime: KrakenRuntime, asset: string, methodName: string): Promise<void> {
   if (!runtime.interaction.interactive) {
-    throw new UsageError("Pix (PayAmigo) requires an interactive Kraken Web deposit before polling");
+    throw new UsageError(`${methodName} requires an interactive Kraken Web deposit before polling`);
   }
   while (
     !(await runtime.interaction.confirm(
-      "Have you completed the PIX deposit in Kraken Web and are you ready to start polling?",
+      `Have you completed the ${asset} deposit using ${methodName} in Kraken Web and are you ready to start polling?`,
       false,
     ))
   ) {}
@@ -190,15 +235,11 @@ export async function configureKrakenEnvironment(
   runtime: KrakenRuntime,
   environment: KrakenEnvironment,
 ): Promise<void> {
-  type Field = "continue" | "asset" | "accountId" | "methodId" | "pollInterval" | "timeout";
+  type Field = "continue" | "asset" | "methodId" | "pollInterval" | "timeout";
   while (true) {
     const field = await runtime.interaction.choose<Field>("Review Kraken prototype values", [
       { name: "Use these values", value: "continue" },
       { name: `Asset: ${environment.asset}`, value: "asset" },
-      {
-        name: `Account ID: ${environment.accountId ?? "Default Kraken Spot account"}`,
-        value: "accountId",
-      },
       {
         name: `Method ID: ${environment.methodId ?? "Interactive selection"}`,
         value: "methodId",
@@ -207,19 +248,16 @@ export async function configureKrakenEnvironment(
         name: `Poll interval: ${environment.pollIntervalSeconds} seconds`,
         value: "pollInterval",
       },
-      { name: `Timeout: ${environment.timeoutSeconds} seconds`, value: "timeout" },
+      {
+        name: `Timeout: ${environment.timeoutSeconds} seconds`,
+        value: "timeout",
+      },
     ]);
     if (field === "continue") return;
     if (field === "asset") {
       environment.asset = (
         await runtime.interaction.text("Kraken deposit asset", undefined, environment.asset)
       ).toUpperCase();
-    }
-    if (field === "accountId") {
-      environment.accountId = await runtime.interaction.optionalText(
-        "Kraken account ID (empty uses the default Spot account)",
-        environment.accountId,
-      );
     }
     if (field === "methodId") {
       environment.methodId = await runtime.interaction.optionalText(
@@ -244,15 +282,9 @@ export async function configureKrakenEnvironment(
   }
 }
 
-export function resolveKrakenEnvironment(
-  environment: Environment,
-  options: KrakenOptions,
-): KrakenEnvironment {
+export function resolveKrakenEnvironment(environment: Environment, options: KrakenOptions): KrakenEnvironment {
   return {
-    asset: (
-      options.asset ?? firstValue(environment, "KRAKEN_DEPOSIT_ASSET") ?? "BRL"
-    ).toUpperCase(),
-    accountId: options.accountId ?? firstValue(environment, "KRAKEN_ACCOUNT_ID"),
+    asset: (options.asset ?? firstValue(environment, "KRAKEN_DEPOSIT_ASSET") ?? "BRL").toUpperCase(),
     methodId: options.methodId ?? firstValue(environment, "KRAKEN_DEPOSIT_METHOD_ID"),
     pollIntervalSeconds: positiveNumber(
       options.pollIntervalSeconds ?? firstValue(environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
@@ -298,13 +330,11 @@ async function selectFundingMethod(
 
 async function listDeposits(
   client: KrakenFundingApi,
-  environment: KrakenEnvironment,
   methodId: string,
   startTime?: string,
 ): Promise<Record<string, unknown>> {
   return client.request("GET", "/funding/v1/deposits", {
     query: {
-      account_id: environment.accountId,
       scope: { method_id: methodId },
       start_time: startTime,
       limit: 500,
@@ -320,25 +350,32 @@ async function waitForSuccessfulDeposit(
   methodId: string,
   probeStartedAt: string,
   baselineDepositIds: Set<string>,
+  dashboard?: KrakenDashboard,
 ): Promise<KrakenDeposit> {
   const deadline = Date.now() + environment.timeoutSeconds * 1000;
   let previousState = "";
   let lastDeposit: KrakenDeposit | undefined;
   while (Date.now() < deadline) {
-    const response = await listDeposits(client, environment, methodId, probeStartedAt);
+    const response = await listDeposits(client, methodId, probeStartedAt);
     const newDeposits = depositsFrom(response).filter(
       (deposit) =>
-        deposit.method_id === methodId &&
-        Boolean(deposit.deposit_id) &&
-        !baselineDepositIds.has(deposit.deposit_id!),
+        deposit.method_id === methodId && Boolean(deposit.deposit_id) && !baselineDepositIds.has(deposit.deposit_id!),
     );
     if (newDeposits.length > 1) {
-      showCompleteRecord(runtime, "kraken.deposit-detection.ambiguous", { deposits: newDeposits });
+      showCompleteRecord(runtime, "kraken.deposit-detection.ambiguous", {
+        deposits: newDeposits,
+      });
       throw new UsageError("More than one new Kraken deposit matched this prototype run");
     }
     const deposit = newDeposits[0];
     if (deposit) {
       lastDeposit = deposit;
+      dashboard?.update(
+        "detect",
+        "Waiting for a successful Kraken deposit",
+        deposit,
+        `Status: ${deposit.status ?? "unknown"}`,
+      );
       const state = `${deposit.deposit_id}:${deposit.status}`;
       const successful = deposit.status?.toLowerCase() === "success";
       if (state !== previousState && !successful && !runtime.output.verbose) {
@@ -358,24 +395,19 @@ async function waitForSuccessfulDeposit(
     await Bun.sleep(environment.pollIntervalSeconds * 1000);
   }
   if (lastDeposit) {
-    showCompleteRecord(runtime, "kraken.deposit.timeout", { deposit: lastDeposit });
+    showCompleteRecord(runtime, "kraken.deposit.timeout", {
+      deposit: lastDeposit,
+    });
   }
   throw new UsageError("Timed out waiting for a successful Kraken deposit");
 }
 
 function depositsFrom(response: Record<string, unknown>): KrakenDeposit[] {
   if (Object.keys(response).length === 0) return [];
-  return requireArray<KrakenDeposit>(
-    response.deposits,
-    "Kraken funding-deposit response did not contain deposits",
-  );
+  return requireArray<KrakenDeposit>(response.deposits, "Kraken funding-deposit response did not contain deposits");
 }
 
-function showCompleteRecord(
-  runtime: KrakenRuntime,
-  event: string,
-  value: Record<string, unknown>,
-): void {
+function showCompleteRecord(runtime: KrakenRuntime, event: string, value: Record<string, unknown>): void {
   runtime.output.info(JSON.stringify(sanitize({ event, ...value }), null, 2));
 }
 
@@ -393,11 +425,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-async function promptPositiveNumber(
-  runtime: KrakenRuntime,
-  label: string,
-  defaultValue: number,
-): Promise<number> {
+async function promptPositiveNumber(runtime: KrakenRuntime, label: string, defaultValue: number): Promise<number> {
   while (true) {
     const value = await runtime.interaction.text(label, undefined, String(defaultValue));
     const parsed = Number(value);

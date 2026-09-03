@@ -24,7 +24,10 @@ const signingSchema = z.object({
 const krakenSchema = z.object({
   KRAKEN_API_KEY: z.string().min(1),
   KRAKEN_API_SECRET: z.string().min(1),
-  KRAKEN_BASE_URL: z.url().default("https://api.kraken.com"),
+  KRAKEN_BASE_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.url().default("https://api.kraken.com"),
+  ),
   KRAKEN_REQUEST_TIMEOUT_SECONDS: z.coerce.number().positive().default(30),
 });
 
@@ -49,6 +52,11 @@ export type KrakenConfiguration = {
   baseUrl: string;
   timeoutSeconds: number;
 };
+
+function emptyStringToUndefined(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  return value.trim() || undefined;
+}
 
 function validationMessage(error: z.ZodError): string {
   return error.issues
