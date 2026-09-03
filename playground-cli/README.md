@@ -1,6 +1,6 @@
 # Tesser Playground CLI
 
-A standalone Bun and TypeScript playground for authenticated Tesser API requests, payments, inbound simulations, OpenFX setup, withdrawals, and rebalances.
+A standalone Bun and TypeScript playground for authenticated Tesser API requests, payments, inbound simulations, OpenFX setup, Kraken funding probes, withdrawals, and rebalances.
 
 ## Setup
 
@@ -40,6 +40,7 @@ Precedence is command options, calling-process environment, selected env file, t
 ./cli --env-file sandbox.env payment
 ./cli --env-file sandbox.env withdrawal --with-ui
 ./cli --env-file sandbox.env rebalance --with-ui
+./cli --env-file sandbox.env kraken
 ```
 
 With no command, the CLI opens a command menu. Explicit commands prompt for missing values and confirm mutations.
@@ -58,6 +59,17 @@ The rebalance flow moves funds from a managed wallet to an OpenFX ledger. It sig
 wallet transaction locally, waits for the matching OpenFX sandbox mock deposit, and
 then follows any ledger swap through completion. Its live UI is written to
 `ui/rebalance/index.html` and shows the mock-deposit boundary in the sequence diagram.
+
+The Kraken menu provides balances, deposits, USD-to-USDC market swaps, and USDC
+withdrawals. Deposit detection and withdrawals use Funding Beta; balances and swaps
+use Spot REST. Add `KRAKEN_API_KEY` and `KRAKEN_API_SECRET` to the selected environment
+file. Enable Query Funds, Deposit Funds, Create/Modify Orders, Query Open Orders,
+Query Closed Orders, Withdraw Funds, and Add Withdrawal Addresses for every workflow.
+
+`Pix (PayAmigo)` deposits are completed in Kraken Web and detected through Funding
+Beta. Swap validates the market order before asking for confirmation. Withdraw has a
+submenu for registering a new onchain target or sending to an existing verified target.
+Registering a target returns to the withdrawal submenu and does not move funds.
 
 ## Non-interactive mode
 
@@ -81,6 +93,13 @@ Without `--env-file`, it uses only the calling-process environment.
 ./cli rebalance
 ./cli wallet-address
 ./cli simulate-inbound
+./cli kraken
+./cli kraken balances
+./cli kraken deposit
+./cli kraken swap
+./cli kraken withdraw
+./cli kraken withdraw register-address
+./cli kraken withdraw send
 ./cli openfx register [api-key-file]
 ./cli openfx webhook-url
 ./cli openfx patch-basis-theory

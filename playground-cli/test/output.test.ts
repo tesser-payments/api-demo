@@ -8,7 +8,10 @@ describe("output sanitization", () => {
         authorization: "Bearer token",
         nested: {
           client_secret: "secret",
+          KRAKEN_API_KEY: "kraken-key",
+          KRAKEN_API_SECRET: "kraken-secret",
           signature: "signature",
+          withdrawal_fee_token: "fee-token",
           unsigned_transaction: "0x123456",
         },
       }),
@@ -16,7 +19,10 @@ describe("output sanitization", () => {
       authorization: "<redacted>",
       nested: {
         client_secret: "<redacted>",
+        KRAKEN_API_KEY: "<redacted>",
+        KRAKEN_API_SECRET: "<redacted>",
         signature: "<redacted>",
+        withdrawal_fee_token: "<redacted>",
         unsigned_transaction: "<unsigned-transaction:8 chars>",
       },
     });

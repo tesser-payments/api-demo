@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getTesserConfiguration, loadEnvironment } from "../src/config.ts";
+import {
+  getKrakenConfiguration,
+  getTesserConfiguration,
+  loadEnvironment,
+} from "../src/config.ts";
 import { UsageError } from "../src/errors.ts";
 
 describe("environment loading", () => {
@@ -47,6 +51,16 @@ describe("environment loading", () => {
     });
 
     expect(configuration.audience).toBe("https://sandbox.example");
+    expect(configuration.timeoutSeconds).toBe(30);
+  });
+
+  test("uses the live Kraken Spot API by default", () => {
+    const configuration = getKrakenConfiguration({
+      KRAKEN_API_KEY: "api-key",
+      KRAKEN_API_SECRET: "api-secret",
+    });
+
+    expect(configuration.baseUrl).toBe("https://api.kraken.com");
     expect(configuration.timeoutSeconds).toBe(30);
   });
 });
