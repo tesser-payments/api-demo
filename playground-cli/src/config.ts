@@ -6,6 +6,24 @@ import { UsageError } from "./errors.ts";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
+export const tesserEnvironmentVariables = [
+  "TESSER_BASE_URL",
+  "TESSER_AUTH_URL",
+  "TESSER_CLIENT_ID",
+  "TESSER_CLIENT_SECRET",
+] as const;
+
+export const signingEnvironmentVariables = [
+  "SIGNING_PUBLIC_KEY",
+  "SIGNING_PRIVATE_KEY",
+  "SIGNING_ENCLAVE_ID",
+] as const;
+
+export const krakenEnvironmentVariables = [
+  "KRAKEN_API_KEY",
+  "KRAKEN_API_SECRET",
+] as const;
+
 const tesserSchema = z.object({
   TESSER_BASE_URL: z.url(),
   TESSER_AUTH_URL: z.url(),
@@ -62,6 +80,18 @@ function validationMessage(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join(".") || "configuration"}: ${issue.message}`)
     .join(", ");
+}
+
+export function requireEnvironmentVariables(
+  environment: Environment,
+  operation: string,
+  names: readonly string[],
+): void {
+  const missingNames = names.filter((name) => !environment[name]?.trim());
+  if (!missingNames.length) return;
+  throw new UsageError(
+    [`Cannot run ${operation}.`, "", "Missing environment variables:", ...missingNames.map((name) => `- ${name}`)].join("\n"),
+  );
 }
 
 export function loadEnvironment(

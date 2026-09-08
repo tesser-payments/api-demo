@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { chooseAccount, listAccounts, type Account } from "../accounts.ts";
-import { firstValue, getKrakenConfiguration } from "../config.ts";
+import { getKrakenConfiguration } from "../config.ts";
 import { UsageError } from "../errors.ts";
 import { requireSuccess } from "../http.ts";
 import { KrakenFundingClient, type KrakenFundingApi } from "../kraken.ts";
@@ -44,9 +44,7 @@ export async function runKrakenRegisterSecrets(
   if (existingLedgers.length) {
     throw new UsageError("Kraken secrets are already registered for this workspace");
   }
-  const instructionsFile =
-    options.cadInstructionsFile ??
-    firstValue(runtime.environment, "KRAKEN_CAD_INSTRUCTIONS_FILE");
+  const instructionsFile = options.cadInstructionsFile;
   const cadInstructions = instructionsFile
     ? readCadInstructions(instructionsFile)
     : await claimCadInstructions(runtime, fundingApi);

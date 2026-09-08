@@ -43,7 +43,7 @@ export type TempoOptions = {
 };
 
 async function connect(runtime: TempoRuntime, options: TempoOptions, dependencies: TempoDependencies, writes = false) {
-  let network = options.network ?? runtime.environment.TEMPO_NETWORK?.trim();
+  let network = options.network;
   if (!network && runtime.interaction.interactive) {
     network = await runtime.interaction.choose("Tempo network", [
       { name: "Moderato testnet (42431)", value: "moderato" },
@@ -165,6 +165,7 @@ async function validateCurrentAssets(rpc: TempoRpc, prepared: PreparedTransactio
 }
 
 export async function signTempoTransfer(runtime: TempoRuntime, options: TempoOptions, dependencies: TempoDependencies = {}) {
+  const configuration = getTempoSigningConfiguration(runtime.environment);
   const file = await runtime.interaction.text("Prepared transaction file", options.file);
   const prepared = readArtifact(file, preparedSchema);
   await validatePrepared(prepared);
@@ -176,7 +177,6 @@ export async function signTempoTransfer(runtime: TempoRuntime, options: TempoOpt
   ]);
   const transactionType = turnkeyTypeSchema.safeParse(selectedType);
   if (!transactionType.success) throw new UsageError("Select TRANSACTION_TYPE_TEMPO or TRANSACTION_TYPE_ETHEREUM");
-  const configuration = getTempoSigningConfiguration(runtime.environment);
   const rpc = await connect(runtime, options, dependencies, true);
   await validateCurrentAssets(rpc, prepared);
   runtime.output.info(JSON.stringify({ ...transferSummary(prepared), turnkey_type: transactionType.data }));

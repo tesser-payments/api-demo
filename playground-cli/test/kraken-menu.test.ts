@@ -87,11 +87,19 @@ class BackInteraction implements Interaction {
   }
 }
 
-function runtime(interaction: Interaction): Runtime & KrakenRuntime {
-  return {
+function runtime(interaction: Interaction): Runtime & KrakenRuntime & {
+  runtime(operation: string, additionalVariables?: readonly string[]): Runtime;
+  krakenRuntime(operation: string): KrakenRuntime;
+} {
+  const baseRuntime = {
     environment: {} as Environment,
     interaction,
     output: new Output("json", false),
     client: {} as TesserClient,
+  };
+  return {
+    ...baseRuntime,
+    runtime: () => baseRuntime,
+    krakenRuntime: () => baseRuntime,
   };
 }

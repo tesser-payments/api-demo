@@ -1,16 +1,14 @@
 # Tempo CLI-only experiments
 
-`tempo cli-only` calls Tempo RPC and Turnkey directly. It does not call Tesser,
+`provider-experiments tempo` calls Tempo RPC and Turnkey directly. It does not call Tesser,
 update platform balances, or test either Tesser SDK. Network inspection works on
 mainnet and Moderato. Preparing, signing, and broadcasting transfers requires
 Moderato and explicit disposable wallet addresses.
 
 ## Network and token selection
 
-Select `--network mainnet` or `--network moderato`, or set `TEMPO_NETWORK` in the
-explicitly selected env file. A staging Tesser URL does not select a Tempo network.
+Select `--network mainnet` or `--network moderato`. A staging Tesser URL does not select a Tempo network.
 Every command reads `eth_chainId` and rejects an RPC connected to another chain.
-Command options override process variables, which override the selected env file.
 
 Mainnet chain ID: `4217`.
 
@@ -38,10 +36,9 @@ and `balances` display metadata read from the selected contracts. Use
 TIP-20 contract without changing the registry. Preparation records that exact
 contract and its metadata; existing files retain their original token identity.
 
-Optional configuration:
+Environment configuration:
 
 ```dotenv
-TEMPO_NETWORK=
 TEMPO_MAINNET_RPC_URL=
 TEMPO_MODERATO_RPC_URL=
 TEMPO_TURNKEY_PUBLIC_KEY=
@@ -66,7 +63,7 @@ address as `signWith`. It does not fall back to the existing Tesser signing keys
 | `receipt --hash <hash>` | Reads receipt, token movements, fee evidence, and historical balances. |
 | `receipt --record <path>` | Also compares the receipt with the intended transfer and saved baseline. |
 
-`./cli tempo cli-only` opens the interactive menu. With `--non-interactive`, supply
+`./cli provider-experiments tempo` opens the interactive menu. With `--non-interactive`, supply
 all required inputs. Interactive signing and broadcasting show the transfer and
 ask for confirmation. An explicit noninteractive sign or broadcast command runs
 without a prompt, following the existing CLI convention.
@@ -74,9 +71,9 @@ without a prompt, following the existing CLI convention.
 Read-only examples:
 
 ```bash
-./cli --non-interactive tempo cli-only --network mainnet inspect
-./cli --non-interactive --output json tempo cli-only --network moderato inspect
-./cli --non-interactive tempo cli-only --network moderato balances --address "$TEMPO_TEST_SOURCE"
+./cli --non-interactive provider-experiments tempo --network mainnet inspect
+./cli --non-interactive --output json provider-experiments tempo --network moderato inspect
+./cli --non-interactive provider-experiments tempo --network moderato balances --address "$TEMPO_TEST_SOURCE"
 ```
 
 After choosing and funding disposable test accounts, prepare an experiment.
@@ -85,7 +82,7 @@ those choices, not account defaults configured by the CLI.
 
 ```bash
 mkdir -p tempo-artifacts
-./cli --non-interactive tempo cli-only --network moderato prepare \
+./cli --non-interactive provider-experiments tempo --network moderato prepare \
   --from "$TEMPO_TEST_SOURCE" \
   --to "$TEMPO_TEST_DESTINATION" \
   --currency USDC \
@@ -112,16 +109,16 @@ otherwise reject, such as insufficient fee funds.
 Sign and broadcast are separate commands:
 
 ```bash
-./cli --env-file config.tempo-test.env --non-interactive tempo cli-only --network moderato sign \
+./cli --env-file config.tempo-test.env --non-interactive provider-experiments tempo --network moderato sign \
   --file tempo-artifacts/alpha-prepared.json \
   --turnkey-type TRANSACTION_TYPE_TEMPO \
   --out tempo-artifacts/alpha-signed.json
 
-./cli --non-interactive tempo cli-only --network moderato broadcast \
+./cli --non-interactive provider-experiments tempo --network moderato broadcast \
   --file tempo-artifacts/alpha-signed.json \
   --record tempo-artifacts/alpha-broadcast.json
 
-./cli --non-interactive --output json tempo cli-only --network moderato receipt \
+./cli --non-interactive --output json provider-experiments tempo --network moderato receipt \
   --record tempo-artifacts/alpha-broadcast.json
 ```
 

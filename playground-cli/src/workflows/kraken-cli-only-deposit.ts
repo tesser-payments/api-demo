@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { firstValue, getKrakenConfiguration, positiveNumber } from "../config.ts";
+import { getKrakenConfiguration, positiveNumber } from "../config.ts";
 import { UsageError } from "../errors.ts";
 import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
 import {
@@ -133,7 +133,7 @@ export async function runKrakenCliOnlyDeposit(
   options: KrakenCliOnlyDepositOptions,
   apis: KrakenCliOnlyDepositApis = {},
 ): Promise<void> {
-  const environment = resolveEnvironment(runtime, options);
+  const environment = resolveEnvironment(options);
   const withUi = await resolveKrakenUi(
     runtime.interaction,
     options.withUi,
@@ -352,35 +352,25 @@ export async function runKrakenCliOnlyDeposit(
   }
 }
 
-function resolveEnvironment(
-  runtime: KrakenRuntime,
-  options: KrakenCliOnlyDepositOptions,
-): KrakenCliOnlyDepositEnvironment {
+function resolveEnvironment(options: KrakenCliOnlyDepositOptions): KrakenCliOnlyDepositEnvironment {
   return {
-    amount: options.amount ?? firstValue(runtime.environment, "KRAKEN_CLI_ONLY_DEPOSIT_AMOUNT"),
+    amount: options.amount,
     resumeUsdAmount: options.resumeUsdAmount,
     destinationAddress:
-      options.destinationAddress ??
-      firstValue(runtime.environment, "KRAKEN_CLI_ONLY_DESTINATION_ADDRESS"),
-    network: parseNetwork(
-      options.network ?? firstValue(runtime.environment, "KRAKEN_CLI_ONLY_DESTINATION_NETWORK"),
-    ),
-    depositMethodId:
-      options.depositMethodId ?? firstValue(runtime.environment, "KRAKEN_CLI_ONLY_DEPOSIT_METHOD_ID"),
-    krakenDepositId:
-      options.krakenDepositId ?? firstValue(runtime.environment, "KRAKEN_CLI_ONLY_KRAKEN_DEPOSIT_ID"),
-    withdrawalMethodId:
-      options.withdrawalMethodId ??
-      firstValue(runtime.environment, "KRAKEN_CLI_ONLY_WITHDRAWAL_METHOD_ID"),
-    accountId: options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID"),
+      options.destinationAddress,
+    network: parseNetwork(options.network),
+    depositMethodId: options.depositMethodId,
+    krakenDepositId: options.krakenDepositId,
+    withdrawalMethodId: options.withdrawalMethodId,
+    accountId: options.accountId,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-      "KRAKEN_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "KRAKEN_TIMEOUT_SECONDS"),
-      "KRAKEN_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
   };

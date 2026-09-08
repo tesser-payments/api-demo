@@ -8,7 +8,7 @@ import {
   requireWalletAddress,
   type Account,
 } from "../accounts.ts";
-import { firstValue, getSigningConfiguration, positiveNumber } from "../config.ts";
+import { getSigningConfiguration, positiveNumber } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { requireData } from "../http.ts";
 import type { Runtime } from "../runtime.ts";
@@ -86,7 +86,7 @@ export async function runPayment(
   if (destinationWalletAddress && options.destinationAccountId) {
     throw new UsageError("Use either a destination wallet address or --destination-account-id");
   }
-  const environment = resolvePaymentEnvironment(runtime, options);
+  const environment = resolvePaymentEnvironment(options);
   await runtime.interaction.approve("authenticating with Auth0 client credentials");
   await runtime.client.authenticate();
   let activePaymentId = options.paymentId;
@@ -173,37 +173,28 @@ export async function runPayment(
   runtime.output.result(payment);
 }
 
-function resolvePaymentEnvironment(runtime: Runtime, options: PaymentOptions): PaymentEnvironment {
-  const currency = (
-    options.currency ?? firstValue(runtime.environment, "PAYMENT_CURRENCY") ?? "USDC"
-  ).toUpperCase();
-  const network = (
-    options.network ?? firstValue(runtime.environment, "PAYMENT_NETWORK") ?? "BASE_SEPOLIA"
-  ).toUpperCase();
+function resolvePaymentEnvironment(options: PaymentOptions): PaymentEnvironment {
+  const currency = (options.currency ?? "USDC").toUpperCase();
+  const network = (options.network ?? "BASE_SEPOLIA").toUpperCase();
   if (!evmNetworks.has(network)) {
     throw new UsageError(`Payment supports EVM networks only: ${[...evmNetworks].join(", ")}`);
   }
   return {
-    sourceWalletId:
-      options.sourceWalletId ??
-      firstValue(runtime.environment, "PAYMENT_SOURCE_WALLET_ID", "WITHDRAWAL_SOURCE_WALLET_ID"),
-    fundingAccountId:
-      options.fundingAccountId ?? firstValue(runtime.environment, "PAYMENT_FUNDING_ACCOUNT_ID"),
-    amount: options.amount ?? firstValue(runtime.environment, "PAYMENT_AMOUNT"),
+    sourceWalletId: options.sourceWalletId,
+    fundingAccountId: options.fundingAccountId,
+    amount: options.amount,
     currency,
     network,
     organizationReferenceId:
-      options.organizationReferenceId ??
-      firstValue(runtime.environment, "PAYMENT_ORGANIZATION_REFERENCE_ID") ??
-      `payment-${randomUUID()}`,
+      options.organizationReferenceId ?? `payment-${randomUUID()}`,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "PAYMENT_POLL_INTERVAL_SECONDS"),
-      "PAYMENT_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "PAYMENT_TIMEOUT_SECONDS"),
-      "PAYMENT_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
   };

@@ -74,7 +74,7 @@ describe("admin invite", () => {
         runtime({ TESSER_BASE_URL: "https://api.tesser.xyz" }),
         "invited@example.com",
       ),
-    ).rejects.toThrow("Admin API secret must be provided");
+    ).rejects.toThrow("Missing environment variables:\n- ADMIN_API_SECRET");
   });
 
   test("rejects an invalid email before calling the API", async () => {

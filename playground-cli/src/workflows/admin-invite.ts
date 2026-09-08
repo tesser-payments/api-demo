@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { firstValue, positiveNumber } from "../config.ts";
+import { firstValue, positiveNumber, requireEnvironmentVariables } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { parseResponseBody } from "../http.ts";
 import type { Runtime } from "../runtime.ts";
@@ -14,6 +14,10 @@ export async function runAdminInvite(
   emailInput: string | undefined,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<void> {
+  requireEnvironmentVariables(runtime.environment, "Workspace: invite user", [
+    "TESSER_BASE_URL",
+    "ADMIN_API_SECRET",
+  ]);
   const emailValue = await runtime.interaction.text("Email address", emailInput);
   const emailResult = emailSchema.safeParse(emailValue);
   if (!emailResult.success) {
@@ -24,10 +28,7 @@ export async function runAdminInvite(
   if (!baseUrlResult.success) {
     throw new UsageError("TESSER_BASE_URL must be a valid URL");
   }
-  const adminSecret = await runtime.interaction.secret(
-    "Admin API secret",
-    firstValue(runtime.environment, "ADMIN_API_SECRET"),
-  );
+  const adminSecret = firstValue(runtime.environment, "ADMIN_API_SECRET")!;
   const timeoutSeconds = positiveNumber(
     firstValue(runtime.environment, "TESSER_TIMEOUT_SECONDS"),
     "TESSER_TIMEOUT_SECONDS",

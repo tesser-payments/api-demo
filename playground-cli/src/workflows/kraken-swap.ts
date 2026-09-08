@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { firstValue, getKrakenConfiguration, positiveNumber } from "../config.ts";
+import { getKrakenConfiguration, positiveNumber } from "../config.ts";
 import { UsageError } from "../errors.ts";
 import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
 import { KrakenSpotClient, type KrakenSpotApi } from "../kraken.ts";
@@ -98,13 +98,13 @@ export async function runKrakenSwap(
       );
     }
     const pollIntervalSeconds = positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-      "KRAKEN_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     );
     const timeoutSeconds = positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "KRAKEN_TIMEOUT_SECONDS"),
-      "KRAKEN_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     );
     const legs: KrakenMarketOrderResult[] = [];
@@ -170,7 +170,7 @@ async function resolveSourceCurrency(
   runtime: KrakenRuntime,
   suppliedCurrency: string | undefined,
 ): Promise<KrakenSwapSourceCurrency> {
-  const configuredCurrency = suppliedCurrency ?? firstValue(runtime.environment, "KRAKEN_SWAP_FROM_CURRENCY");
+  const configuredCurrency = suppliedCurrency;
   if (!configuredCurrency && runtime.interaction.interactive) {
     return runtime.interaction.choose("Currency to spend", [
       { name: "BRL", value: "BRL" as const },
@@ -188,9 +188,7 @@ function resolveDestinationCurrency(
   runtime: KrakenRuntime,
   suppliedCurrency: string | undefined,
 ): KrakenSwapDestinationCurrency {
-  const currency = (
-    suppliedCurrency ?? firstValue(runtime.environment, "KRAKEN_SWAP_TO_CURRENCY") ?? "USDC"
-  )
+  const currency = (suppliedCurrency ?? "USDC")
     .trim()
     .toUpperCase();
   if (currency !== "USDC") throw new UsageError("Kraken swap destination currency must be USDC");
@@ -202,7 +200,7 @@ async function resolveAmount(
   suppliedAmount: string | undefined,
   currency: KrakenSwapSourceCurrency,
 ): Promise<string> {
-  const configuredAmount = suppliedAmount ?? firstValue(runtime.environment, "KRAKEN_SWAP_AMOUNT");
+  const configuredAmount = suppliedAmount;
   const amount = runtime.interaction.interactive
     ? await runtime.interaction.text(`${currency} amount to spend`, configuredAmount)
     : configuredAmount;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chooseAccount, getAccount, listAccounts, requireAccountId, type Account } from "../accounts.ts";
-import { firstValue, positiveNumber } from "../config.ts";
+import { positiveNumber } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { requireData } from "../http.ts";
 import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
@@ -66,7 +66,7 @@ export type KrakenDepositEnvironment = {
 };
 
 export async function runKrakenDeposit(runtime: Runtime, options: KrakenDepositOptions): Promise<void> {
-  const environment = resolveKrakenDepositEnvironment(runtime, options);
+  const environment = resolveKrakenDepositEnvironment(options);
   const withUi = await resolveKrakenUi(runtime.interaction, options.withUi, "deposit", options.validateOnly);
   const dashboard = withUi ? new KrakenDashboard("deposit") : undefined;
   dashboard?.start();
@@ -186,7 +186,7 @@ export async function runKrakenDeposit(runtime: Runtime, options: KrakenDepositO
         deposit: planned,
         instructions,
         balance_before: balanceBefore,
-        resume_command: `./cli kraken deposit --deposit-id ${depositId}`,
+        resume_command: `./cli treasury deposit --deposit-id ${depositId}`,
       };
       dashboard?.complete(result);
       runtime.output.result(result);
@@ -227,28 +227,25 @@ export async function runKrakenDeposit(runtime: Runtime, options: KrakenDepositO
 }
 
 export function resolveKrakenDepositEnvironment(
-  runtime: Runtime,
   options: KrakenDepositOptions,
 ): KrakenDepositEnvironment {
   return {
-    sourceBankId: options.sourceBankId ?? firstValue(runtime.environment, "KRAKEN_DEPOSIT_SOURCE_BANK_ID"),
-    krakenLedgerId: options.krakenLedgerId ?? firstValue(runtime.environment, "KRAKEN_LEDGER_ID"),
-    amount: options.amount ?? firstValue(runtime.environment, "KRAKEN_DEPOSIT_AMOUNT"),
+    sourceBankId: options.sourceBankId,
+    krakenLedgerId: options.krakenLedgerId,
+    amount: options.amount,
     organizationReferenceId:
-      options.organizationReferenceId ??
-      firstValue(runtime.environment, "KRAKEN_DEPOSIT_ORGANIZATION_REFERENCE_ID") ??
-      `kraken-brl-${randomUUID()}`,
+      options.organizationReferenceId ?? `kraken-brl-${randomUUID()}`,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-      "KRAKEN_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "KRAKEN_TIMEOUT_SECONDS"),
-      "KRAKEN_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
-    resumeDepositId: firstValue(runtime.environment, "KRAKEN_DEPOSIT_ID"),
+    resumeDepositId: undefined,
   };
 }
 
@@ -341,7 +338,7 @@ async function resolveKrakenLedger(runtime: Runtime, environment: KrakenDepositE
   const accounts = await listAccounts(runtime.client, [["type", "ledger"]]);
   const matches = accounts.filter(isKrakenLedger);
   if (!matches.length) {
-    throw new UsageError("No managed Kraken ledger exists; run kraken register_secrets first");
+    throw new UsageError("No managed Kraken ledger exists; run workspace register-secrets kraken first");
   }
   return chooseAccount(runtime.interaction, "Managed Kraken ledger", matches);
 }
@@ -415,7 +412,7 @@ async function waitForInstructions(
     await Bun.sleep(environment.pollIntervalSeconds * 1000);
   }
   throw new UsageError(
-    `Timed out waiting for Kraken deposit instructions; resume with ./cli kraken deposit --deposit-id ${depositId}`,
+    `Timed out waiting for Kraken deposit instructions; resume with ./cli treasury deposit --deposit-id ${depositId}`,
   );
 }
 
@@ -453,7 +450,7 @@ async function waitForPlanning(
     await Bun.sleep(environment.pollIntervalSeconds * 1000);
   }
   throw new UsageError(
-    `Timed out waiting for Kraken deposit planning; resume with ./cli kraken deposit --deposit-id ${depositId}`,
+    `Timed out waiting for Kraken deposit planning; resume with ./cli treasury deposit --deposit-id ${depositId}`,
   );
 }
 
@@ -482,7 +479,7 @@ async function waitForCompletion(
     await Bun.sleep(environment.pollIntervalSeconds * 1000);
   }
   throw new UsageError(
-    `Timed out waiting for Kraken deposit completion; resume with ./cli kraken deposit --deposit-id ${depositId}`,
+    `Timed out waiting for Kraken deposit completion; resume with ./cli treasury deposit --deposit-id ${depositId}`,
   );
 }
 

@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getKrakenConfiguration,
   getTesserConfiguration,
   loadEnvironment,
+  requireEnvironmentVariables,
 } from "../src/config.ts";
 import { UsageError } from "../src/errors.ts";
 
@@ -76,5 +77,24 @@ describe("environment loading", () => {
     });
 
     expect(configuration.baseUrl).toBe("https://sandbox.kraken.example");
+  });
+
+  test("reports every missing operation prerequisite together", () => {
+    expect(() =>
+      requireEnvironmentVariables(
+        { TESSER_BASE_URL: "https://sandbox.example", TESSER_CLIENT_ID: "   " },
+        "Payment",
+        ["TESSER_BASE_URL", "TESSER_CLIENT_ID", "TESSER_CLIENT_SECRET"],
+      ),
+    ).toThrow(
+      "Cannot run Payment.\n\nMissing environment variables:\n- TESSER_CLIENT_ID\n- TESSER_CLIENT_SECRET",
+    );
+  });
+
+  test("keeps operation inputs out of the environment template", () => {
+    const template = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
+    expect(template).not.toMatch(/^(PAYMENT|WITHDRAWAL|REBALANCE|KRAKEN_CLI_ONLY|KRAKEN_SWAP)_/m);
+    expect(template).not.toMatch(/^TEMPO_NETWORK=/m);
+    expect(template).not.toMatch(/^KRAKEN_(ACCOUNT_ID|DEPOSIT_|WITHDRAW_|POLL_INTERVAL_SECONDS|TIMEOUT_SECONDS)=/m);
   });
 });

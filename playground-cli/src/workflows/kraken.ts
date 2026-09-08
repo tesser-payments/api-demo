@@ -1,4 +1,4 @@
-import { firstValue, getKrakenConfiguration, positiveNumber, type Environment } from "../config.ts";
+import { getKrakenConfiguration, positiveNumber, type Environment } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { KrakenFundingClient, type KrakenFundingApi } from "../kraken.ts";
 import type { Interaction } from "../interaction.ts";
@@ -367,16 +367,16 @@ export async function configureKrakenEnvironment(
 
 export function resolveKrakenEnvironment(environment: Environment, options: KrakenOptions): KrakenEnvironment {
   return {
-    asset: (options.asset ?? firstValue(environment, "KRAKEN_DEPOSIT_ASSET") ?? "BRL").toUpperCase(),
-    methodId: options.methodId ?? firstValue(environment, "KRAKEN_DEPOSIT_METHOD_ID"),
+    asset: (options.asset ?? "BRL").toUpperCase(),
+    methodId: options.methodId,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-      "KRAKEN_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(environment, "KRAKEN_TIMEOUT_SECONDS"),
-      "KRAKEN_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
   };

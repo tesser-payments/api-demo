@@ -1,4 +1,4 @@
-import { firstValue, getKrakenConfiguration } from "../config.ts";
+import { getKrakenConfiguration } from "../config.ts";
 import { UsageError } from "../errors.ts";
 import {
   KrakenFundingClient,
@@ -28,8 +28,7 @@ export async function runKrakenDepositShow(
       getKrakenConfiguration(runtime.environment),
       runtime.output,
     );
-  const accountId =
-    options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID");
+  const accountId = options.accountId;
   const deposits = await loadDeposits(client, accountId);
   const selectedDeposit = depositId
     ? deposits.find((deposit) => deposit.deposit_id === depositId)

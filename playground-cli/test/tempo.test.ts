@@ -198,8 +198,9 @@ async function sign(context: ReturnType<typeof fixture>, format: "tempo" | "eip1
 describe("Tempo configuration and reads", () => {
   test("requires a chain independently of the selected Tesser environment", () => {
     expect(() => getTempoConfiguration({ TESSER_BASE_URL: "https://api-staging.tesser.xyz" })).toThrow("Select --network");
-    expect(getTempoConfiguration({ TEMPO_NETWORK: "moderato" }).chainId).toBe(42431);
-    expect(getTempoConfiguration({ TEMPO_NETWORK: "moderato" }, "mainnet").chainId).toBe(4217);
+    expect(() => getTempoConfiguration({ TEMPO_NETWORK: "moderato" })).toThrow("Select --network");
+    expect(getTempoConfiguration({}, "moderato").chainId).toBe(42431);
+    expect(getTempoConfiguration({}, "mainnet").chainId).toBe(4217);
     expect(getTempoConfiguration({ TEMPO_MAINNET_RPC_URL: "https://custom.example/key" }, "moderato").rpcUrl).toBe("https://rpc.moderato.tempo.xyz");
   });
 

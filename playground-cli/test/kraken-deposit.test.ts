@@ -39,7 +39,7 @@ describe("Kraken deposit inspection", () => {
     expect(result).toEqual(requestedDeposit);
     expect(request).toHaveBeenCalledTimes(2);
     expect(request.mock.calls[0]?.[2]).toEqual({
-      query: { account_id: "account-id", limit: 500 },
+      query: { account_id: undefined, limit: 500 },
       operation: "List Kraken funding deposits",
     });
     expect(request.mock.calls[1]?.[2]).toEqual({
@@ -86,9 +86,7 @@ describe("Kraken deposit inspection", () => {
 
 function runtime(): KrakenRuntime {
   return {
-    environment: {
-      KRAKEN_ACCOUNT_ID: "account-id",
-    } as Environment,
+    environment: {} as Environment,
     interaction: new NonInteractiveInteraction(),
     output: new Output("json", false),
   };

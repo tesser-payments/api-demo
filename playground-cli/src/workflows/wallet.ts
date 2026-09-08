@@ -6,7 +6,6 @@ import {
   requireWalletAddress,
   type Account,
 } from "../accounts.ts";
-import { firstValue } from "../config.ts";
 import type { Runtime } from "../runtime.ts";
 
 export type WalletOptions = {
@@ -22,17 +21,8 @@ export async function resolveWallet(
 ): Promise<Account> {
   const walletId = options.walletId;
   if (walletId) return getAccount(runtime.client, walletId);
-  const currency = (
-    options.currency ??
-    defaults.currency ??
-    firstValue(runtime.environment, "WITHDRAWAL_FROM_CURRENCY", "PAYMENT_CURRENCY") ??
-    (runtime.interaction.interactive ? undefined : "USDC")
-  );
-  const network = (
-    options.network ??
-    defaults.network ??
-    firstValue(runtime.environment, "WITHDRAWAL_FROM_NETWORK", "PAYMENT_NETWORK")
-  );
+  const currency = options.currency ?? defaults.currency ?? (runtime.interaction.interactive ? undefined : "USDC");
+  const network = options.network ?? defaults.network;
   const resolvedCurrency = (await runtime.interaction.text("Wallet currency", currency, "USDC")).toUpperCase();
   const resolvedNetwork = (await runtime.interaction.text("Wallet network", network, "BASE_SEPOLIA")).toUpperCase();
   const accounts = await listAccounts(runtime.client, [["entity_type", "sub_org"]]);
@@ -47,10 +37,7 @@ export async function resolveWallet(
 }
 
 export async function runWalletAddress(runtime: Runtime, options: WalletOptions): Promise<void> {
-  const configuredWalletId =
-    options.walletId ??
-    firstValue(runtime.environment, "WITHDRAWAL_SOURCE_WALLET_ID", "PAYMENT_SOURCE_WALLET_ID");
-  const account = await resolveWallet(runtime, { ...options, walletId: configuredWalletId });
+  const account = await resolveWallet(runtime, options);
   runtime.output.result({
     accountId: account.id,
     address: requireWalletAddress(account, `Wallet ${account.id ?? ""}`),

@@ -1,5 +1,4 @@
 import { requireAccountId, requireWalletAddress } from "../accounts.ts";
-import { firstValue } from "../config.ts";
 import { UsageError } from "../errors.ts";
 import { requireData } from "../http.ts";
 import type { Runtime } from "../runtime.ts";
@@ -24,11 +23,7 @@ export async function runSimulateInbound(
   runtime: Runtime,
   options: SimulateInboundOptions,
 ): Promise<void> {
-  const configuredNetwork = (
-    options.network ??
-    firstValue(runtime.environment, "WITHDRAWAL_FROM_NETWORK", "PAYMENT_NETWORK") ??
-    "BASE_SEPOLIA"
-  ).toUpperCase();
+  const configuredNetwork = (options.network ?? "BASE_SEPOLIA").toUpperCase();
   const network = networks.includes(configuredNetwork as (typeof networks)[number])
     ? configuredNetwork
     : await runtime.interaction.choose(
@@ -50,11 +45,8 @@ export async function runSimulateInbound(
   }
   const count = options.count ?? 1;
   if (!Number.isInteger(count) || count < 1) throw new UsageError("Count must be a positive integer");
-  const walletId =
-    options.walletId ??
-    firstValue(runtime.environment, "WITHDRAWAL_SOURCE_WALLET_ID", "PAYMENT_SOURCE_WALLET_ID");
   const wallet = await resolveWallet(runtime, {
-    walletId,
+    walletId: options.walletId,
     currency: "USDC",
     network,
   });

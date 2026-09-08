@@ -52,8 +52,8 @@ export type TempoConfiguration = {
 };
 
 export function getTempoConfiguration(environment: Environment, network?: string): TempoConfiguration {
-  const selected = networkSchema.safeParse(network ?? firstValue(environment, "TEMPO_NETWORK"));
-  if (!selected.success) throw new UsageError("Select --network mainnet or moderato, or set TEMPO_NETWORK explicitly");
+  const selected = networkSchema.safeParse(network);
+  if (!selected.success) throw new UsageError("Select --network mainnet or moderato");
   const defaults = tempoNetworks[selected.data];
   const rpcUrl = firstValue(environment, selected.data === "mainnet" ? "TEMPO_MAINNET_RPC_URL" : "TEMPO_MODERATO_RPC_URL") ?? defaults.rpcUrl;
   let url: URL;

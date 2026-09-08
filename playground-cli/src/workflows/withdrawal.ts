@@ -8,7 +8,7 @@ import {
   requireWalletAddress,
   type Account,
 } from "../accounts.ts";
-import { firstValue, getSigningConfiguration, positiveNumber } from "../config.ts";
+import { getSigningConfiguration, positiveNumber } from "../config.ts";
 import { WithdrawalDashboard } from "../dashboard.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { requireData } from "../http.ts";
@@ -73,7 +73,7 @@ export type WithdrawalEnvironment = {
 };
 
 export async function runWithdrawal(runtime: Runtime, options: WithdrawalOptions): Promise<void> {
-  const environment = resolveWithdrawalEnvironment(runtime, options);
+  const environment = resolveWithdrawalEnvironment(options);
   getSigningConfiguration(runtime.environment);
   const withUi = await resolveWithdrawalUi(runtime, options);
   const dashboard = withUi ? new WithdrawalDashboard() : undefined;
@@ -346,46 +346,38 @@ async function promptPositiveNumber(
   }
 }
 
-function resolveWithdrawalEnvironment(
-  runtime: Runtime,
-  options: WithdrawalOptions,
-): WithdrawalEnvironment {
-  const amount = options.amount ?? firstValue(runtime.environment, "WITHDRAWAL_AMOUNT") ?? "100";
+function resolveWithdrawalEnvironment(options: WithdrawalOptions): WithdrawalEnvironment {
+  const amount = options.amount ?? "100";
   const parsedAmount = Number(amount);
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-    throw new UsageError("WITHDRAWAL_AMOUNT must be greater than zero");
+    throw new UsageError("--amount must be greater than zero");
   }
   return {
-    sourceWalletId:
-      options.sourceWalletId ?? firstValue(runtime.environment, "WITHDRAWAL_SOURCE_WALLET_ID"),
-    destinationBankAccountId:
-      options.destinationBankAccountId ??
-      firstValue(runtime.environment, "WITHDRAWAL_DESTINATION_BANK_ACCOUNT_ID"),
+    sourceWalletId: options.sourceWalletId,
+    destinationBankAccountId: options.destinationBankAccountId,
     amount,
     fromCurrency: (
-      options.fromCurrency ?? firstValue(runtime.environment, "WITHDRAWAL_FROM_CURRENCY") ?? "USDC"
+      options.fromCurrency ?? "USDC"
     ).toUpperCase(),
     fromNetwork: (
-      options.fromNetwork ?? firstValue(runtime.environment, "WITHDRAWAL_FROM_NETWORK") ?? "BASE_SEPOLIA"
+      options.fromNetwork ?? "BASE_SEPOLIA"
     ).toUpperCase(),
     toCurrency: (
-      options.toCurrency ?? firstValue(runtime.environment, "WITHDRAWAL_TO_CURRENCY") ?? "USD"
+      options.toCurrency ?? "USD"
     ).toUpperCase(),
     organizationReferenceId:
-      options.organizationReferenceId ??
-      firstValue(runtime.environment, "WITHDRAWAL_ORGANIZATION_REFERENCE_ID") ??
-      `withdrawal-${randomUUID()}`,
+      options.organizationReferenceId ?? `withdrawal-${randomUUID()}`,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "WITHDRAWAL_POLL_INTERVAL_SECONDS"),
-      "WITHDRAWAL_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "WITHDRAWAL_TIMEOUT_SECONDS"),
-      "WITHDRAWAL_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
-    resumeWithdrawalId: firstValue(runtime.environment, "WITHDRAWAL_ID"),
+    resumeWithdrawalId: undefined,
   };
 }
 

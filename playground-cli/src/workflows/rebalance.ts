@@ -8,7 +8,7 @@ import {
   requireWalletAddress,
   type Account,
 } from "../accounts.ts";
-import { firstValue, getSigningConfiguration, positiveNumber } from "../config.ts";
+import { getSigningConfiguration, positiveNumber } from "../config.ts";
 import { RebalanceDashboard } from "../dashboard.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { requireData } from "../http.ts";
@@ -73,7 +73,7 @@ export type RebalanceEnvironment = {
 };
 
 export async function runRebalance(runtime: Runtime, options: RebalanceOptions): Promise<void> {
-  const environment = resolveRebalanceEnvironment(runtime, options);
+  const environment = resolveRebalanceEnvironment(options);
   getSigningConfiguration(runtime.environment);
   const withUi = await resolveRebalanceUi(runtime, options);
   const dashboard = withUi ? new RebalanceDashboard() : undefined;
@@ -310,49 +310,38 @@ export async function configureRebalanceEnvironment(
   }
 }
 
-function resolveRebalanceEnvironment(
-  runtime: Runtime,
-  options: RebalanceOptions,
-): RebalanceEnvironment {
-  const amount = options.amount ?? firstValue(runtime.environment, "REBALANCE_AMOUNT") ?? "100";
+function resolveRebalanceEnvironment(options: RebalanceOptions): RebalanceEnvironment {
+  const amount = options.amount ?? "100";
   const parsedAmount = Number(amount);
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-    throw new UsageError("REBALANCE_AMOUNT must be greater than zero");
+    throw new UsageError("--amount must be greater than zero");
   }
   return {
-    sourceWalletId:
-      options.sourceWalletId ?? firstValue(runtime.environment, "REBALANCE_SOURCE_WALLET_ID"),
-    destinationLedgerId:
-      options.destinationLedgerId ??
-      firstValue(runtime.environment, "REBALANCE_DESTINATION_LEDGER_ID"),
+    sourceWalletId: options.sourceWalletId,
+    destinationLedgerId: options.destinationLedgerId,
     amount,
     fromCurrency: (
-      options.fromCurrency ?? firstValue(runtime.environment, "REBALANCE_FROM_CURRENCY") ?? "USDC"
+      options.fromCurrency ?? "USDC"
     ).toUpperCase(),
     fromNetwork: (
-      options.fromNetwork ??
-      firstValue(runtime.environment, "REBALANCE_FROM_NETWORK") ??
-      "BASE_SEPOLIA"
+      options.fromNetwork ?? "BASE_SEPOLIA"
     ).toUpperCase(),
     toCurrency: (
-      options.toCurrency ?? firstValue(runtime.environment, "REBALANCE_TO_CURRENCY") ?? "USD"
+      options.toCurrency ?? "USD"
     ).toUpperCase(),
     organizationReferenceId:
-      options.organizationReferenceId ??
-      firstValue(runtime.environment, "REBALANCE_ORGANIZATION_REFERENCE_ID") ??
-      `rebalance-${randomUUID()}`,
+      options.organizationReferenceId ?? `rebalance-${randomUUID()}`,
     pollIntervalSeconds: positiveNumber(
-      options.pollIntervalSeconds ??
-        firstValue(runtime.environment, "REBALANCE_POLL_INTERVAL_SECONDS"),
-      "REBALANCE_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     ),
     timeoutSeconds: positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "REBALANCE_TIMEOUT_SECONDS"),
-      "REBALANCE_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     ),
-    resumeRebalanceId: firstValue(runtime.environment, "REBALANCE_ID"),
+    resumeRebalanceId: undefined,
   };
 }
 

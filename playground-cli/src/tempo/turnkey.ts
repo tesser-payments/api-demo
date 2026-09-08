@@ -1,6 +1,6 @@
 import { ApiKeyStamper } from "@turnkey/api-key-stamper";
 import { z } from "zod";
-import { firstValue, type Environment } from "../config.ts";
+import { firstValue, requireEnvironmentVariables, type Environment } from "../config.ts";
 import { PlaygroundError, UsageError } from "../errors.ts";
 import type { Output } from "../output.ts";
 import type { PreparedTransaction } from "./artifacts.ts";
@@ -16,6 +16,11 @@ export type TempoSigningConfiguration = {
 };
 
 export function getTempoSigningConfiguration(environment: Environment): TempoSigningConfiguration {
+  requireEnvironmentVariables(environment, "Provider experiments: Tempo sign", [
+    "TEMPO_TURNKEY_PUBLIC_KEY",
+    "TEMPO_TURNKEY_PRIVATE_KEY",
+    "TEMPO_TURNKEY_ORGANIZATION_ID",
+  ]);
   const publicKey = firstValue(environment, "TEMPO_TURNKEY_PUBLIC_KEY");
   const privateKey = firstValue(environment, "TEMPO_TURNKEY_PRIVATE_KEY");
   const organizationId = firstValue(environment, "TEMPO_TURNKEY_ORGANIZATION_ID");

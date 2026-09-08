@@ -1,5 +1,5 @@
-import { firstValue, getKrakenConfiguration, positiveNumber } from "../config.ts";
-import { CancelledError, UsageError } from "../errors.ts";
+import { getKrakenConfiguration, positiveNumber } from "../config.ts";
+import { UsageError } from "../errors.ts";
 import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
 import { KrakenFundingClient, KrakenSpotClient, type KrakenFundingApi, type KrakenSpotApi } from "../kraken.ts";
 import type { KrakenRuntime } from "./kraken.ts";
@@ -58,23 +58,31 @@ export type KrakenWithdrawOptions = {
   withUi?: boolean;
 };
 
-export async function runKrakenWithdrawMenu(runtime: KrakenRuntime): Promise<void> {
-  if (!runtime.interaction.interactive) {
+type KrakenWithdrawMenuContext = KrakenRuntime & {
+  krakenRuntime(operation: string): KrakenRuntime;
+};
+
+function menuRuntime(context: KrakenWithdrawMenuContext, operation: string): KrakenRuntime {
+  return context.krakenRuntime(operation);
+}
+
+export async function runKrakenWithdrawMenu(context: KrakenWithdrawMenuContext): Promise<void> {
+  if (!context.interaction.interactive) {
     throw new UsageError("A Kraken withdrawal subcommand is required in non-interactive mode");
   }
-  while (true) {
-    const selection = await runtime.interaction.choose("Kraken withdrawal", [
-      { name: "Register new onchain target address", value: "register" },
-      { name: "Withdraw to existing target address", value: "withdraw" },
-      { name: "Back", value: "back" },
-    ] as const);
-    if (selection === "back") return;
-    try {
-      if (selection === "register") await runKrakenRegisterAddress(runtime);
-      if (selection === "withdraw") await runKrakenWithdraw(runtime);
-    } catch (error) {
-      showMenuError(runtime, error);
-    }
+  const selection = await context.interaction.choose("Kraken withdrawal", [
+    { name: "Register new onchain target address", value: "register" },
+    { name: "Withdraw to existing target address", value: "withdraw" },
+    { name: "Back", value: "back" },
+  ] as const);
+  if (selection === "back") return;
+  if (selection === "register") {
+    await runKrakenRegisterAddress(
+      menuRuntime(context, "Provider experiments: Kraken register withdrawal address"),
+    );
+  }
+  if (selection === "withdraw") {
+    await runKrakenWithdraw(menuRuntime(context, "Provider experiments: Kraken withdrawal"));
   }
 }
 
@@ -84,8 +92,8 @@ export async function runKrakenRegisterAddress(
   fundingApi?: KrakenFundingApi,
 ): Promise<void> {
   const client = fundingApi ?? new KrakenFundingClient(getKrakenConfiguration(runtime.environment), runtime.output);
-  const asset = (options.asset ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_ASSET") ?? "USDC").toUpperCase();
-  const accountId = options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID");
+  const asset = (options.asset ?? "USDC").toUpperCase();
+  const accountId = options.accountId;
   const method = await selectWithdrawalMethod(runtime, client, asset, accountId, options.methodId);
   const methodId = requireText(method.method_id, "Selected Kraken withdrawal method has no method_id");
   const address = await requiredInput(runtime, "Onchain target address", options.address);
@@ -130,8 +138,8 @@ export async function runKrakenWithdraw(
     const configuration = getKrakenConfiguration(runtime.environment);
     const fundingClient = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
     const spotClient = spotApi ?? new KrakenSpotClient(configuration, runtime.output);
-    const asset = (options.asset ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_ASSET") ?? "USDC").toUpperCase();
-    const accountId = options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID");
+    const asset = (options.asset ?? "USDC").toUpperCase();
+    const accountId = options.accountId;
     dashboard?.update("configure", "Selecting the Kraken withdrawal network and target", {
       asset,
       accountId,
@@ -239,13 +247,13 @@ export async function runKrakenWithdraw(
       "Kraken withdrawal response did not contain withdrawal_id",
     );
     const pollIntervalSeconds = positiveNumber(
-      options.pollIntervalSeconds ?? firstValue(runtime.environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-      "KRAKEN_POLL_INTERVAL_SECONDS",
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
       3,
     );
     const timeoutSeconds = positiveNumber(
-      options.timeoutSeconds ?? firstValue(runtime.environment, "KRAKEN_TIMEOUT_SECONDS"),
-      "KRAKEN_TIMEOUT_SECONDS",
+      options.timeoutSeconds,
+      "--timeout-seconds",
       1800,
     );
     dashboard?.update("settle", "Waiting for the Kraken withdrawal to complete", {
@@ -413,7 +421,7 @@ async function requiredInput(
 }
 
 async function requiredPositiveAmount(runtime: KrakenRuntime, suppliedValue: string | undefined): Promise<string> {
-  const configured = suppliedValue ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_AMOUNT");
+  const configured = suppliedValue;
   const amount = runtime.interaction.interactive
     ? await runtime.interaction.text("USDC amount", configured)
     : configured;
@@ -428,11 +436,6 @@ function amountFrom(value: unknown, name: string): string {
   return requireText(record.amount, `Kraken ${name} did not contain amount`);
 }
 
-function showMenuError(runtime: KrakenRuntime, error: unknown): void {
-  if (error instanceof CancelledError) runtime.output.info(error.message);
-  else if (error instanceof Error) runtime.output.error(error.message);
-  else runtime.output.error(String(error));
-}
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new UsageError(message);
