@@ -3,7 +3,12 @@ import { dirname, resolve } from "node:path";
 import type { Interaction } from "./interaction.ts";
 import { sanitize } from "./output.ts";
 
-export type KrakenDashboardKind = "deposit" | "funding-deposit" | "swap" | "withdrawal";
+export type KrakenDashboardKind =
+  | "deposit"
+  | "funding-deposit"
+  | "swap"
+  | "withdrawal"
+  | "cli-only-deposit";
 
 type DashboardStatus = "running" | "completed" | "failed";
 type StageStatus = "pending" | "active" | "completed" | "failed";
@@ -47,15 +52,13 @@ const definitions: Record<KrakenDashboardKind, DashboardDefinition> = {
     ],
   },
   swap: {
-    title: "Kraken USD to USDC swap",
+    title: "Kraken BRL or USD to USDC swap",
     outputPath: "ui/kraken/swap/index.html",
     stages: [
       { id: "configure", label: "Review swap amount" },
       { id: "balance", label: "Check available USD" },
-      { id: "market", label: "Select USDC/USD market" },
-      { id: "validate", label: "Validate market order" },
-      { id: "create", label: "Place market order" },
-      { id: "settle", label: "Wait for order completion" },
+      { id: "brl-usd", label: "Trade BRL1 to USD" },
+      { id: "usd-usdc", label: "Trade USD to USDC" },
     ],
   },
   withdrawal: {
@@ -67,6 +70,17 @@ const definitions: Record<KrakenDashboardKind, DashboardDefinition> = {
       { id: "balance", label: "Check available balance" },
       { id: "create", label: "Create withdrawal" },
       { id: "settle", label: "Wait for withdrawal completion" },
+    ],
+  },
+  "cli-only-deposit": {
+    title: "Kraken CLI-only BRL-to-USDC deposit",
+    outputPath: "ui/kraken/cli-only/deposit/index.html",
+    stages: [
+      { id: "target", label: "Prepare destination address" },
+      { id: "funding", label: "Receive BRL at Kraken" },
+      { id: "brl-usd", label: "Trade BRL1 to USD" },
+      { id: "usd-usdc", label: "Trade USD to USDC" },
+      { id: "withdrawal", label: "Withdraw USDC" },
     ],
   },
 };

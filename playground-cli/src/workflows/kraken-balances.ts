@@ -38,6 +38,7 @@ export async function loadKrakenBalances(client: KrakenSpotApi): Promise<KrakenB
 
 export function normalizeKrakenAsset(asset: string): string {
   const withoutBalanceSuffix = asset.split(".")[0]!.toUpperCase();
+  if (withoutBalanceSuffix === "BRL1") return "BRL";
   if (/^[XZ][A-Z]{3}$/.test(withoutBalanceSuffix)) return withoutBalanceSuffix.slice(1);
   return withoutBalanceSuffix;
 }

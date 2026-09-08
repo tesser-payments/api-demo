@@ -1,5 +1,10 @@
 # Tesser Playground CLI
 
+Tempo protocol experiments are available under `tempo cli-only`: inspect networks
+and tokens, read balances, prepare and sign test transfers, broadcast, and inspect
+receipts. See the [Tempo CLI-only guide](docs/tempo-cli-only.md) for account inputs,
+mainnet/testnet mappings, and repeatable Moderato commands.
+
 A standalone Bun and TypeScript playground for authenticated Tesser API requests, payments, inbound simulations, OpenFX setup, Kraken funding probes, withdrawals, and rebalances.
 
 ## Setup
@@ -37,11 +42,13 @@ Precedence is command options, calling-process environment, selected env file, t
 
 ```bash
 ./cli --env-file sandbox.env
+./cli --env-file prod.env admin invite recipient@example.com
 ./cli --env-file sandbox.env payment
 ./cli --env-file sandbox.env withdrawal --with-ui
 ./cli --env-file sandbox.env rebalance --with-ui
 ./cli --env-file sandbox.env kraken
 ./cli --env-file staging.env kraken deposit --with-ui
+./cli --env-file config.staging.env kraken cli-only deposit --with-ui
 ./cli --env-file staging.env kraken funding deposit --with-ui
 ./cli --env-file staging.env kraken swap --with-ui
 ./cli --env-file staging.env kraken withdraw send --with-ui
@@ -49,6 +56,11 @@ Precedence is command options, calling-process environment, selected env file, t
 
 With no command, the CLI opens a command menu. Explicit commands prompt for missing values and confirm mutations.
 The selected environment is retained while the command menu remains open.
+
+`admin invite` creates the Auth0 user and asks Auth0 to email the recipient a
+password-setup link. It does not return a copyable invitation link. Configure
+`TESSER_BASE_URL` and `ADMIN_API_SECRET` for the selected environment. The command
+does not require Tesser Auth0 client credentials.
 The withdrawal flow shows its resolved values before authentication. Press Enter on
 `Use these values` to continue, or select any field to edit it and return to the review menu.
 It also asks whether to enable the withdrawal UI, defaulting to disabled. Pass `--with-ui`
@@ -83,6 +95,21 @@ for confirmation. Withdraw has a submenu for registering a new onchain target or
 sending to an existing verified target. Registering a target returns to the withdrawal
 submenu and does not move funds.
 
+`kraken cli-only deposit` is a separate prototype that acts as Tesser without calling
+the Tesser API. It accepts a destination EVM address, uses a selected or newly observed
+BRL deposit at Kraken, executes immediate `BRL1/USD` and `USDC/USD` market orders, and
+withdraws the resulting USDC through the matching native Ethereum or Base mainnet method.
+The CLI cannot verify that the supplied address belongs to a Tesser-managed wallet. The
+address must already be registered and verified manually in Kraken for the selected
+network. The command requires live Kraken credentials and explicit confirmation before
+each market order and the withdrawal. It keeps fee-quote tokens and full wallet addresses
+out of output.
+Before requesting new funding, it lists successful deposits and asks whether to reuse
+one. Pass `--kraken-deposit-id` to select one directly.
+If the BRL-to-USD order completed but a later action failed, pass
+`--resume-usd-amount <available-usd>` to continue with the provider's available USD
+without selecting the deposit or repeating the first order.
+
 The Tesser BRL deposit, direct Funding API deposit, swap, and withdrawal send flows ask
 whether to enable a live UI, defaulting to disabled. Pass `--with-ui` to skip the prompt.
 Their dashboards are written under `ui/kraken/<command>/index.html` and update while
@@ -91,6 +118,7 @@ the CLI polls Kraken or Tesser.
 ```bash
 ./cli --env-file staging.env kraken register_secrets
 ./cli --env-file staging.env kraken deposit --amount 50.00
+./cli --env-file config.staging.env kraken cli-only deposit --network BASE
 ```
 
 Non-interactive registration requires a normalized CAD instructions file:
@@ -126,6 +154,7 @@ Without `--env-file`, it uses only the calling-process environment.
 
 ```bash
 ./cli request METHOD PATH
+./cli admin invite [email]
 ./cli payment [destination-wallet-address]
 ./cli withdrawal
 ./cli rebalance
@@ -136,6 +165,7 @@ Without `--env-file`, it uses only the calling-process environment.
 ./cli kraken register_secrets
 ./cli kraken deposit [--with-ui]
 ./cli kraken deposit --deposit-id [tesser-deposit-id]
+./cli kraken cli-only deposit [--with-ui]
 ./cli kraken funding deposit [--with-ui]
 ./cli kraken funding deposit show [kraken-deposit-id]
 ./cli kraken swap [--with-ui]

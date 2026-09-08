@@ -12,14 +12,14 @@ describe("Kraken dashboards", () => {
     const dashboard = new KrakenDashboard("swap", path);
 
     dashboard.start();
-    dashboard.update("settle", "Waiting for the Kraken market order to close", {
+    dashboard.update("usd-usdc", "Waiting for the Kraken market order to close", {
       orderId: "order-1",
       KRAKEN_API_KEY: "secret",
       status: "open",
     });
 
     let html = readFileSync(path, "utf8");
-    expect(html).toContain("Kraken USD to USDC swap");
+    expect(html).toContain("Kraken BRL or USD to USDC swap");
     expect(html).toContain("Waiting for the Kraken market order to close");
     expect(html).toContain("order-1");
     expect(html).toContain("&lt;redacted&gt;");
@@ -35,13 +35,19 @@ describe("Kraken dashboards", () => {
   });
 
   test("prompts for every interactive Kraken dashboard with disabled as the default", async () => {
-    const kinds: KrakenDashboardKind[] = ["deposit", "funding-deposit", "swap", "withdrawal"];
+    const dashboards: Array<{ kind: KrakenDashboardKind; path: string }> = [
+      { kind: "deposit", path: "ui/kraken/deposit/index.html" },
+      { kind: "funding-deposit", path: "ui/kraken/funding-deposit/index.html" },
+      { kind: "swap", path: "ui/kraken/swap/index.html" },
+      { kind: "withdrawal", path: "ui/kraken/withdrawal/index.html" },
+      { kind: "cli-only-deposit", path: "ui/kraken/cli-only/deposit/index.html" },
+    ];
 
-    for (const kind of kinds) {
+    for (const { kind, path } of dashboards) {
       const interaction = new DashboardInteraction(true);
       await expect(resolveKrakenUi(interaction, undefined, kind)).resolves.toBeTrue();
       expect(interaction.confirmationDefaults).toEqual([false]);
-      expect(interaction.confirmationLabels[0]).toContain(`ui/kraken/${kind}/index.html`);
+      expect(interaction.confirmationLabels[0]).toContain(path);
     }
   });
 

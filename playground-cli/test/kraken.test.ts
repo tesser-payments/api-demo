@@ -131,6 +131,47 @@ describe("Kraken Spot API", () => {
 });
 
 describe("Kraken BRL/PIX workflow", () => {
+  test("asks for and returns an existing successful deposit without requesting new funding", async () => {
+    const existingDeposit = {
+      deposit_id: "existing-deposit",
+      method_id: "pix-method",
+      status: "success",
+      create_time: "2026-09-04T12:00:00Z",
+      amount: { asset: { class: "currency", name: "BRL" }, amount: "50" },
+    };
+    const responses: Record<string, unknown>[] = [
+      {
+        methods: [
+          {
+            asset: { class: "currency", name: "BRL" },
+            method_id: "pix-method",
+            method_name: "Pix (PayAmigo)",
+          },
+        ],
+      },
+      { deposits: [existingDeposit] },
+    ];
+    const request = mock(async () => responses.shift()!);
+    const interaction = new ExistingDepositInteraction();
+
+    const result = await runKraken(
+      runtime(interaction),
+      {
+        methodId: "pix-method",
+        embedded: true,
+        allowExistingDeposit: true,
+      },
+      { request } as KrakenFundingApi,
+    );
+
+    expect(result).toEqual(existingDeposit);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(interaction.choiceLabels).toEqual([
+      "Kraken deposit source",
+      "Select the successful Kraken BRL deposit",
+    ]);
+  });
+
   test("claims fiat instructions and waits for the new deposit to succeed", async () => {
     const oldDeposit = {
       deposit_id: "old-deposit",
@@ -301,6 +342,37 @@ class RecordingInteraction extends NonInteractiveInteraction {
     this.choiceLabels.push(label);
     return super.choose(label, choices);
   }
+}
+
+class ExistingDepositInteraction implements Interaction {
+  readonly interactive = true;
+  readonly choiceLabels: string[] = [];
+
+  async text(label: string, value?: string, defaultValue?: string): Promise<string> {
+    const resolved = value?.trim() || defaultValue?.trim();
+    if (!resolved) throw new UsageError(`${label} is required`);
+    return resolved;
+  }
+
+  async optionalText(_label: string, defaultValue?: string): Promise<string | undefined> {
+    return defaultValue;
+  }
+
+  async secret(label: string, value?: string): Promise<string> {
+    if (!value) throw new UsageError(`${label} is required`);
+    return value;
+  }
+
+  async choose<T>(label: string, choices: Choice<T>[]): Promise<T> {
+    this.choiceLabels.push(label);
+    return choices[0]!.value;
+  }
+
+  async confirm(_label: string, defaultValue = false): Promise<boolean> {
+    return defaultValue;
+  }
+
+  async approve(): Promise<void> {}
 }
 
 class ManualPixInteraction implements Interaction {

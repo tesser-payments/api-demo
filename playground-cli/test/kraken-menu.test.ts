@@ -5,7 +5,7 @@ import type { Choice, Interaction } from "../src/interaction.ts";
 import { Output } from "../src/output.ts";
 import type { Runtime } from "../src/runtime.ts";
 import type { KrakenRuntime } from "../src/workflows/kraken.ts";
-import { runKrakenMenu } from "../src/workflows/kraken-menu.ts";
+import { runKrakenCliOnlyMenu, runKrakenMenu } from "../src/workflows/kraken-menu.ts";
 import { runKrakenWithdrawMenu } from "../src/workflows/kraken-withdraw.ts";
 
 describe("Kraken menus", () => {
@@ -20,8 +20,21 @@ describe("Kraken menus", () => {
       "BRL deposit through Tesser",
       "Balances",
       "Direct Funding API deposit",
-      "Swap USD to USDC",
+      "Swap BRL or USD to USDC",
       "Withdraw USDC",
+      "CLI-only prototypes",
+      "Back",
+    ]);
+  });
+
+  test("keeps CLI-only workflows in their own submenu", async () => {
+    const interaction = new BackInteraction();
+
+    await runKrakenCliOnlyMenu(runtime(interaction));
+
+    expect(interaction.labels).toEqual(["Kraken CLI-only prototypes"]);
+    expect(interaction.choiceNames).toEqual([
+      "BRL-to-USDC deposit through Kraken",
       "Back",
     ]);
   });

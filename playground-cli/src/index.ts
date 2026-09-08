@@ -5,7 +5,9 @@ import { CancelledError, PlaygroundError, UsageError } from "./errors.ts";
 import { selectEnvironmentFile } from "./environment-selection.ts";
 import { Output } from "./output.ts";
 import { createRuntime, type Runtime } from "./runtime.ts";
+import { registerTempoCommands, runTempoMenu } from "./tempo/commands.ts";
 import { runRequest, type RequestCommandOptions } from "./workflows/request.ts";
+import { runAdminInvite } from "./workflows/admin-invite.ts";
 import { runPayment, type PaymentOptions } from "./workflows/payment.ts";
 import { runWithdrawal, type WithdrawalOptions } from "./workflows/withdrawal.ts";
 import { runRebalance, type RebalanceOptions } from "./workflows/rebalance.ts";
@@ -22,8 +24,12 @@ import {
 import { runKraken, type KrakenOptions, type KrakenRuntime } from "./workflows/kraken.ts";
 import { runKrakenDeposit, type KrakenDepositOptions } from "./workflows/kraken-e2e-deposit.ts";
 import { runKrakenBalances } from "./workflows/kraken-balances.ts";
+import {
+  runKrakenCliOnlyDeposit,
+  type KrakenCliOnlyDepositOptions,
+} from "./workflows/kraken-cli-only-deposit.ts";
 import { runKrakenDepositShow, type KrakenDepositShowOptions } from "./workflows/kraken-deposit.ts";
-import { runKrakenMenu } from "./workflows/kraken-menu.ts";
+import { runKrakenCliOnlyMenu, runKrakenMenu } from "./workflows/kraken-menu.ts";
 import { runKrakenRegisterSecrets, type KrakenRegisterSecretsOptions } from "./workflows/kraken-register-secrets.ts";
 import { runKrakenSwap, type KrakenSwapOptions } from "./workflows/kraken-swap.ts";
 import {
@@ -71,6 +77,22 @@ program
   .action(
     async (method: string | undefined, path: string | undefined, options: RequestCommandOptions, command: Command) =>
       runRequest((await contextFor(command)).runtime(), method, path, options),
+  );
+
+const admin = program
+  .command("admin")
+  .description("Manage Tesser users and administrative operations");
+
+admin
+  .command("invite")
+  .description("Create a user and send a password-setup email")
+  .argument("[email]", "Email address to invite")
+  .action(
+    async (
+      email: string | undefined,
+      _options: unknown,
+      command: Command,
+    ) => runAdminInvite(await contextFor(command), email),
   );
 
 program
@@ -203,6 +225,32 @@ kraken
     runKrakenDeposit((await contextFor(command)).runtime(), options),
   );
 
+const krakenCliOnly = kraken
+  .command("cli-only")
+  .description("Run Kraken flows owned entirely by the playground CLI")
+  .action(async (_options: unknown, command: Command) =>
+    runKrakenCliOnlyMenu((await contextFor(command)).runtime()),
+  );
+
+krakenCliOnly
+  .command("deposit")
+  .description("Run a CLI-only BRL-to-USDC deposit through Kraken")
+  .option("--amount <amount>", "Exact BRL deposit amount")
+  .option("--resume-usd-amount <amount>", "Resume after a completed BRL-to-USD order")
+  .option("--destination-address <address>", "Destination EVM wallet address")
+  .option("--network <network>", "Destination mainnet: ETHEREUM or BASE")
+  .option("--deposit-method-id <id>", "Kraken BRL deposit method ID")
+  .option("--kraken-deposit-id <id>", "Reuse a successful Kraken BRL deposit")
+  .option("--withdrawal-method-id <id>", "Kraken native USDC withdrawal method ID")
+  .option("--account-id <id>", "Kraken account ID")
+  .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
+  .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
+  .option("--validate-only", "Validate configuration without calling an API")
+  .option("--with-ui", "Write a live HTML CLI-only deposit dashboard")
+  .action(async (options: KrakenCliOnlyDepositOptions, command: Command) =>
+    runKrakenCliOnlyDeposit((await contextFor(command)).krakenRuntime(), options),
+  );
+
 const krakenFunding = kraken.command("funding").description("Run direct Kraken Funding API diagnostics");
 
 const krakenFundingDeposit = krakenFunding
@@ -214,9 +262,9 @@ const krakenFundingDeposit = krakenFunding
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
   .option("--validate-only", "Validate configuration without calling Kraken")
   .option("--with-ui", "Write a live HTML Kraken funding deposit dashboard")
-  .action(async (options: KrakenOptions, command: Command) =>
-    runKraken((await contextFor(command)).krakenRuntime(), options),
-  );
+  .action(async (options: KrakenOptions, command: Command) => {
+    await runKraken((await contextFor(command)).krakenRuntime(), options);
+  });
 
 krakenFundingDeposit
   .command("show")
@@ -229,8 +277,10 @@ krakenFundingDeposit
 
 kraken
   .command("swap")
-  .description("Swap USD to USDC using a validated market order")
-  .option("--amount <amount>", "USD amount to spend")
+  .description("Swap BRL or USD to USDC using validated market orders")
+  .option("--amount <amount>", "Source-currency amount to spend")
+  .option("--from-currency <currency>", "Source currency: BRL or USD")
+  .option("--to-currency <currency>", "Destination currency: USDC")
   .option("--poll-interval-seconds <seconds>", "Polling interval", numberOption)
   .option("--timeout-seconds <seconds>", "Workflow timeout", numberOption)
   .option("--with-ui", "Write a live HTML Kraken swap dashboard")
@@ -319,6 +369,8 @@ openFx
     createBankAccount((await contextFor(command)).runtime(), options),
   );
 
+registerTempoCommands(program, contextFor);
+
 program.action(async (_options: GlobalOptions, command: Command) => {
   const context = await contextFor(command);
   if (!context.interaction.interactive) {
@@ -331,12 +383,14 @@ async function runInteractiveMenu(context: Context): Promise<void> {
   while (true) {
     const selected = await context.interaction.choose("What do you want to do?", [
       { name: "Make an API request", value: "request" },
+      { name: "Invite a user", value: "admin-invite" },
       { name: "Send a payment", value: "payment" },
       { name: "Run a withdrawal", value: "withdrawal" },
       { name: "Run an OpenFX rebalance", value: "rebalance" },
       { name: "Show a wallet address", value: "wallet" },
       { name: "Simulate inbound payments", value: "simulate" },
       { name: "Kraken", value: "kraken" },
+      { name: "Tempo CLI-only", value: "tempo" },
       { name: "Register OpenFX credentials", value: "openfx-register" },
       { name: "Show the OpenFX webhook URL", value: "openfx-webhook" },
       {
@@ -350,7 +404,11 @@ async function runInteractiveMenu(context: Context): Promise<void> {
     if (selected === "exit") return;
     try {
       if (selected === "kraken") await runKrakenMenu(context.runtime());
-      if (selected !== "kraken") {
+      if (selected === "tempo") await runTempoMenu(context);
+      if (selected === "admin-invite") {
+        await runAdminInvite(context, undefined);
+      }
+      if (selected !== "kraken" && selected !== "tempo" && selected !== "admin-invite") {
         const runtime = context.runtime();
         if (selected === "request") await runRequest(runtime, undefined, undefined, {});
         if (selected === "payment") await runPayment(runtime, undefined, {});

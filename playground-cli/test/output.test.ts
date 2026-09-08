@@ -76,4 +76,20 @@ describe("output sanitization", () => {
     });
     errorOutput.mockRestore();
   });
+
+  test("masks wallet addresses in verbose provider exchanges", () => {
+    const errorOutput = spyOn(process.stderr, "write").mockImplementation(() => true);
+    const address = "0x1111111111111111111111111111111111111111";
+
+    new Output("human", true).exchange(
+      "Create withdrawal",
+      { body: { expected_address: address } },
+      { body: { address_details: { crypto: { address } } } },
+    );
+
+    const exchange = String(errorOutput.mock.calls[0]?.[0]);
+    expect(exchange).not.toContain(address);
+    expect(exchange).toContain("0x1111…1111");
+    errorOutput.mockRestore();
+  });
 });

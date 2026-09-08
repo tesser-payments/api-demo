@@ -28,7 +28,7 @@ type KrakenFundingMethod = {
   [key: string]: unknown;
 };
 
-type KrakenDeposit = {
+export type KrakenDeposit = {
   deposit_id?: string;
   method_id?: string;
   network_id?: string;
@@ -46,6 +46,10 @@ export type KrakenOptions = {
   timeoutSeconds?: number;
   validateOnly?: boolean;
   withUi?: boolean;
+  embedded?: boolean;
+  allowExistingDeposit?: boolean;
+  existingDepositId?: string;
+  expectedAmount?: string;
 };
 
 export type KrakenEnvironment = {
@@ -65,10 +69,12 @@ export async function runKraken(
   runtime: KrakenRuntime,
   options: KrakenOptions,
   fundingApi?: KrakenFundingApi,
-): Promise<void> {
+): Promise<KrakenDeposit | undefined> {
   const environment = resolveKrakenEnvironment(runtime.environment, options);
   const configuration = getKrakenConfiguration(runtime.environment);
-  const withUi = await resolveKrakenUi(runtime.interaction, options.withUi, "funding-deposit", options.validateOnly);
+  const withUi = options.embedded
+    ? false
+    : await resolveKrakenUi(runtime.interaction, options.withUi, "funding-deposit", options.validateOnly);
   const dashboard = withUi ? new KrakenDashboard("funding-deposit") : undefined;
   dashboard?.start();
   if (dashboard) runtime.output.info(`Kraken funding deposit UI: ${dashboard.outputPath}`);
@@ -78,7 +84,7 @@ export async function runKraken(
       methodId: environment.methodId,
       baseUrl: configuration.baseUrl,
     });
-    if (runtime.interaction.interactive && !options.validateOnly) {
+    if (runtime.interaction.interactive && !options.validateOnly && !options.embedded) {
       await configureKrakenEnvironment(runtime, environment);
     }
     dashboard?.update("configure", "Reviewed the Kraken funding deposit values", {
@@ -89,8 +95,8 @@ export async function runKraken(
     if (options.validateOnly) {
       showKrakenEnvironment(runtime, configuration.baseUrl, environment);
       dashboard?.complete({ valid: true });
-      runtime.output.result({ valid: true });
-      return;
+      if (!options.embedded) runtime.output.result({ valid: true });
+      return undefined;
     }
     showKrakenEnvironment(runtime, configuration.baseUrl, environment);
     const client = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
@@ -123,6 +129,20 @@ export async function runKraken(
       networkId: selectedMethod.network?.network_id,
       networkName: selectedMethod.network?.network_name,
     });
+    const existingDeposit = await resolveExistingDeposit(runtime, client, methodId, options);
+    if (existingDeposit) {
+      dashboard?.complete(existingDeposit);
+      if (!runtime.output.verbose && !options.embedded) runtime.output.result(existingDeposit);
+      return existingDeposit;
+    }
+    const expectedAmount =
+      options.expectedAmount ??
+      (options.allowExistingDeposit && runtime.interaction.interactive
+        ? await runtime.interaction.text(`${environment.asset} amount to deposit`)
+        : undefined);
+    if (expectedAmount) {
+      runtime.output.info(`Deposit exactly ${expectedAmount} ${environment.asset} at Kraken.`);
+    }
     dashboard?.update("baseline", "Recording existing Kraken deposits", {
       methodId,
       probeStartedAt,
@@ -197,11 +217,74 @@ export async function runKraken(
       dashboard,
     );
     dashboard?.complete(deposit);
-    if (!runtime.output.verbose) runtime.output.result(deposit);
+    if (!runtime.output.verbose && !options.embedded) runtime.output.result(deposit);
+    return deposit;
   } catch (error) {
     dashboard?.fail(error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+async function resolveExistingDeposit(
+  runtime: KrakenRuntime,
+  client: KrakenFundingApi,
+  methodId: string,
+  options: KrakenOptions,
+): Promise<KrakenDeposit | undefined> {
+  if (!options.existingDepositId && (!options.allowExistingDeposit || !runtime.interaction.interactive)) {
+    return undefined;
+  }
+  const successfulDeposits = (await listAllDeposits(client, methodId)).filter(
+    (deposit) => deposit.method_id === methodId && deposit.status?.toLowerCase() === "success" && deposit.deposit_id,
+  );
+  if (options.existingDepositId) {
+    const deposit = successfulDeposits.find((candidate) => candidate.deposit_id === options.existingDepositId);
+    if (!deposit) {
+      throw new UsageError(`Successful Kraken deposit ${options.existingDepositId} was not found for this method`);
+    }
+    return deposit;
+  }
+  if (!successfulDeposits.length) return undefined;
+  const source = await runtime.interaction.choose("Kraken deposit source", [
+    { name: "Use an existing successful BRL deposit", value: "existing" as const },
+    { name: "Wait for a new BRL deposit", value: "new" as const },
+  ]);
+  if (source === "new") return undefined;
+  const depositId = await runtime.interaction.choose(
+    "Select the successful Kraken BRL deposit",
+    successfulDeposits.map((deposit) => ({
+      name: depositChoiceName(deposit),
+      value: requireText(deposit.deposit_id, "Kraken deposit has no deposit_id"),
+    })),
+  );
+  return successfulDeposits.find((deposit) => deposit.deposit_id === depositId)!;
+}
+
+async function listAllDeposits(client: KrakenFundingApi, methodId: string): Promise<KrakenDeposit[]> {
+  const deposits: KrakenDeposit[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    const response = await client.request("GET", "/funding/v1/deposits", {
+      query: cursor ? { cursor } : { scope: { method_id: methodId }, limit: 500 },
+      operation: "List Kraken funding deposits for selection",
+    });
+    deposits.push(...depositsFrom(response));
+    cursor = typeof response.next_cursor === "string" && response.next_cursor.trim()
+      ? response.next_cursor
+      : undefined;
+    if (!cursor) return deposits;
+  }
+  throw new UsageError("Kraken funding deposits exceeded the 10-page selection limit");
+}
+
+function depositChoiceName(deposit: KrakenDeposit): string {
+  const amount = isRecord(deposit.amount) && typeof deposit.amount.amount === "string"
+    ? deposit.amount.amount
+    : "unknown amount";
+  const asset = isRecord(deposit.amount) && isRecord(deposit.amount.asset) && typeof deposit.amount.asset.name === "string"
+    ? deposit.amount.asset.name
+    : "BRL";
+  return [deposit.create_time ?? "Unknown date", `${amount} ${asset}`, deposit.deposit_id].join(" · ");
 }
 
 function showKrakenEnvironment(runtime: KrakenRuntime, baseUrl: string, environment: KrakenEnvironment): void {
