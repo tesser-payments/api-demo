@@ -1,11 +1,7 @@
-import { firstValue, getKrakenConfiguration, positiveNumber } from "../config.ts";
-import { CancelledError, UsageError } from "../errors.ts";
-import {
-  KrakenFundingClient,
-  KrakenSpotClient,
-  type KrakenFundingApi,
-  type KrakenSpotApi,
-} from "../kraken.ts";
+import { getKrakenConfiguration, positiveNumber } from "../config.ts";
+import { UsageError } from "../errors.ts";
+import { KrakenDashboard, resolveKrakenUi } from "../kraken-dashboard.ts";
+import { KrakenFundingClient, KrakenSpotClient, type KrakenFundingApi, type KrakenSpotApi } from "../kraken.ts";
 import type { KrakenRuntime } from "./kraken.ts";
 import { availableKrakenBalance, loadKrakenBalances } from "./kraken-balances.ts";
 
@@ -59,25 +55,34 @@ export type KrakenWithdrawOptions = {
   feeMode?: FeeMode;
   pollIntervalSeconds?: number;
   timeoutSeconds?: number;
+  withUi?: boolean;
 };
 
-export async function runKrakenWithdrawMenu(runtime: KrakenRuntime): Promise<void> {
-  if (!runtime.interaction.interactive) {
+type KrakenWithdrawMenuContext = KrakenRuntime & {
+  krakenRuntime(operation: string): KrakenRuntime;
+};
+
+function menuRuntime(context: KrakenWithdrawMenuContext, operation: string): KrakenRuntime {
+  return context.krakenRuntime(operation);
+}
+
+export async function runKrakenWithdrawMenu(context: KrakenWithdrawMenuContext): Promise<void> {
+  if (!context.interaction.interactive) {
     throw new UsageError("A Kraken withdrawal subcommand is required in non-interactive mode");
   }
-  while (true) {
-    const selection = await runtime.interaction.choose("Kraken withdrawal", [
-      { name: "Register new onchain target address", value: "register" },
-      { name: "Withdraw to existing target address", value: "withdraw" },
-      { name: "Back", value: "back" },
-    ] as const);
-    if (selection === "back") return;
-    try {
-      if (selection === "register") await runKrakenRegisterAddress(runtime);
-      if (selection === "withdraw") await runKrakenWithdraw(runtime);
-    } catch (error) {
-      showMenuError(runtime, error);
-    }
+  const selection = await context.interaction.choose("Kraken withdrawal", [
+    { name: "Register new onchain target address", value: "register" },
+    { name: "Withdraw to existing target address", value: "withdraw" },
+    { name: "Back", value: "back" },
+  ] as const);
+  if (selection === "back") return;
+  if (selection === "register") {
+    await runKrakenRegisterAddress(
+      menuRuntime(context, "Provider experiments: Kraken register withdrawal address"),
+    );
+  }
+  if (selection === "withdraw") {
+    await runKrakenWithdraw(menuRuntime(context, "Provider experiments: Kraken withdrawal"));
   }
 }
 
@@ -87,8 +92,8 @@ export async function runKrakenRegisterAddress(
   fundingApi?: KrakenFundingApi,
 ): Promise<void> {
   const client = fundingApi ?? new KrakenFundingClient(getKrakenConfiguration(runtime.environment), runtime.output);
-  const asset = (options.asset ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_ASSET") ?? "USDC").toUpperCase();
-  const accountId = options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID");
+  const asset = (options.asset ?? "USDC").toUpperCase();
+  const accountId = options.accountId;
   const method = await selectWithdrawalMethod(runtime, client, asset, accountId, options.methodId);
   const methodId = requireText(method.method_id, "Selected Kraken withdrawal method has no method_id");
   const address = await requiredInput(runtime, "Onchain target address", options.address);
@@ -125,104 +130,154 @@ export async function runKrakenWithdraw(
   fundingApi?: KrakenFundingApi,
   spotApi?: KrakenSpotApi,
 ): Promise<void> {
-  const configuration = getKrakenConfiguration(runtime.environment);
-  const fundingClient = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
-  const spotClient = spotApi ?? new KrakenSpotClient(configuration, runtime.output);
-  const asset = (options.asset ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_ASSET") ?? "USDC").toUpperCase();
-  const accountId = options.accountId ?? firstValue(runtime.environment, "KRAKEN_ACCOUNT_ID");
-  const method = await selectWithdrawalMethod(runtime, fundingClient, asset, accountId, options.methodId);
-  const methodId = requireText(method.method_id, "Selected Kraken withdrawal method has no method_id");
-  const target = await selectExistingAddress(runtime, fundingClient, methodId, accountId, options.addressId);
-  const addressId = requireText(target.address_id, "Selected Kraken target has no address_id");
-  const address = requireText(target.address_details?.crypto?.address, "Selected Kraken target has no crypto address");
-  const feeMode = options.feeMode ?? await runtime.interaction.choose<FeeMode>(
-    "How should Kraken interpret the withdrawal amount?",
-    [
-      { name: "Total deducted from Kraken, including the fee", value: "total" },
-      { name: "Exact amount received; add the fee on top", value: "receive" },
-    ],
-  );
-  const amount = await requiredPositiveAmount(runtime, options.amount);
-  const minimumAmount = Number(method.minimum_amount);
-  if (Number.isFinite(minimumAmount) && Number(amount) < minimumAmount) {
-    throw new UsageError(
-      `Kraken requires at least ${method.minimum_amount} ${asset} for this withdrawal network`,
+  const withUi = await resolveKrakenUi(runtime.interaction, options.withUi, "withdrawal");
+  const dashboard = withUi ? new KrakenDashboard("withdrawal") : undefined;
+  dashboard?.start();
+  if (dashboard) runtime.output.info(`Kraken withdrawal UI: ${dashboard.outputPath}`);
+  try {
+    const configuration = getKrakenConfiguration(runtime.environment);
+    const fundingClient = fundingApi ?? new KrakenFundingClient(configuration, runtime.output);
+    const spotClient = spotApi ?? new KrakenSpotClient(configuration, runtime.output);
+    const asset = (options.asset ?? "USDC").toUpperCase();
+    const accountId = options.accountId;
+    dashboard?.update("configure", "Selecting the Kraken withdrawal network and target", {
+      asset,
+      accountId,
+      methodId: options.methodId,
+      addressId: options.addressId,
+    });
+    const method = await selectWithdrawalMethod(runtime, fundingClient, asset, accountId, options.methodId);
+    const methodId = requireText(method.method_id, "Selected Kraken withdrawal method has no method_id");
+    const target = await selectExistingAddress(runtime, fundingClient, methodId, accountId, options.addressId);
+    const addressId = requireText(target.address_id, "Selected Kraken target has no address_id");
+    const address = requireText(
+      target.address_details?.crypto?.address,
+      "Selected Kraken target has no crypto address",
     );
-  }
-  const feeIncluded = feeMode === "total";
-  const feeQuote = await fundingClient.request(
-    "GET",
-    `/funding/v1/fees/${encodeURIComponent(methodId)}`,
-    {
+    const feeMode =
+      options.feeMode ??
+      (await runtime.interaction.choose<FeeMode>("How should Kraken interpret the withdrawal amount?", [
+        {
+          name: "Total deducted from Kraken, including the fee",
+          value: "total",
+        },
+        {
+          name: "Exact amount received; add the fee on top",
+          value: "receive",
+        },
+      ]));
+    const amount = await requiredPositiveAmount(runtime, options.amount);
+    const minimumAmount = Number(method.minimum_amount);
+    if (Number.isFinite(minimumAmount) && Number(amount) < minimumAmount) {
+      throw new UsageError(`Kraken requires at least ${method.minimum_amount} ${asset} for this withdrawal network`);
+    }
+    const feeIncluded = feeMode === "total";
+    dashboard?.update("quote", "Calculating the Kraken withdrawal fee", {
+      asset,
+      amount,
+      feeMode,
+      method,
+      target,
+    });
+    const feeQuote = await fundingClient.request("GET", `/funding/v1/fees/${encodeURIComponent(methodId)}`, {
       query: { amount, fee_included: feeIncluded, account_id: accountId },
       operation: "Calculate Kraken withdrawal fee",
-    },
-  );
-  const feeToken = requireText(
-    feeQuote.withdrawal_fee_token,
-    "Kraken withdrawal fee response did not contain withdrawal_fee_token",
-  );
-  const grossAmount = amountFrom(feeQuote.gross_amount, "gross_amount");
-  const netAmount = amountFrom(feeQuote.net_amount, "net_amount");
-  const feeAmount = amountFrom(feeQuote.fee, "fee");
-  const balances = await loadKrakenBalances(spotClient);
-  const available = availableKrakenBalance(balances, asset);
-  if (available < Number(grossAmount)) {
-    throw new UsageError(`Kraken has ${available} ${asset} available, less than the quoted ${grossAmount} ${asset} debit`);
+    });
+    const feeToken = requireText(
+      feeQuote.withdrawal_fee_token,
+      "Kraken withdrawal fee response did not contain withdrawal_fee_token",
+    );
+    const grossAmount = amountFrom(feeQuote.gross_amount, "gross_amount");
+    const netAmount = amountFrom(feeQuote.net_amount, "net_amount");
+    const feeAmount = amountFrom(feeQuote.fee, "fee");
+    dashboard?.update("balance", "Checking the available Kraken balance", {
+      asset,
+      grossAmount,
+      netAmount,
+      feeAmount,
+    });
+    const balances = await loadKrakenBalances(spotClient);
+    const available = availableKrakenBalance(balances, asset);
+    if (available < Number(grossAmount)) {
+      throw new UsageError(
+        `Kraken has ${available} ${asset} available, less than the quoted ${grossAmount} ${asset} debit`,
+      );
+    }
+    runtime.output.info(
+      [
+        "Kraken onchain withdrawal:",
+        `Network: ${method.network?.network_name ?? "Unspecified"}`,
+        `Target: ${target.name ?? addressId}`,
+        `Address: ${address}`,
+        `Kraken debit: ${grossAmount} ${asset}`,
+        `Target receives: ${netAmount} ${asset}`,
+        `Fee: ${feeAmount} ${asset}`,
+      ].join("\n"),
+    );
+    await runtime.interaction.approve("Create this live Kraken withdrawal?", false);
+    const startedAt = new Date().toISOString();
+    dashboard?.update("create", "Creating the Kraken withdrawal", {
+      asset,
+      addressId,
+      amount,
+      grossAmount,
+      netAmount,
+      feeAmount,
+    });
+    const createResponse = await fundingClient.request("POST", "/funding/v1/withdrawals", {
+      query: { account_id: accountId },
+      body: {
+        scope: { method_id: methodId },
+        address_id: addressId,
+        amount: {
+          asset_amount: { asset: { class: "currency", name: asset }, amount },
+        },
+        fee: { quoted_fee: { token: feeToken }, fee_included: feeIncluded },
+        expected_address: address,
+      },
+      operation: "Create Kraken funding withdrawal",
+    });
+    if (createResponse.approval_request_id) {
+      dashboard?.complete(createResponse);
+      if (!runtime.output.verbose) runtime.output.result(createResponse);
+      return;
+    }
+    const withdrawalId = requireText(
+      createResponse.withdrawal_id,
+      "Kraken withdrawal response did not contain withdrawal_id",
+    );
+    const pollIntervalSeconds = positiveNumber(
+      options.pollIntervalSeconds,
+      "--poll-interval-seconds",
+      3,
+    );
+    const timeoutSeconds = positiveNumber(
+      options.timeoutSeconds,
+      "--timeout-seconds",
+      1800,
+    );
+    dashboard?.update("settle", "Waiting for the Kraken withdrawal to complete", {
+      withdrawalId,
+      asset,
+      addressId,
+    });
+    const withdrawal = await waitForWithdrawal(
+      fundingClient,
+      withdrawalId,
+      methodId,
+      asset,
+      accountId,
+      startedAt,
+      pollIntervalSeconds,
+      timeoutSeconds,
+      dashboard,
+    );
+    dashboard?.complete(withdrawal);
+    if (!runtime.output.verbose) runtime.output.result(withdrawal);
+  } catch (error) {
+    dashboard?.fail(error instanceof Error ? error.message : String(error));
+    throw error;
   }
-  runtime.output.info(
-    [
-      "Kraken onchain withdrawal:",
-      `Network: ${method.network?.network_name ?? "Unspecified"}`,
-      `Target: ${target.name ?? addressId}`,
-      `Address: ${address}`,
-      `Kraken debit: ${grossAmount} ${asset}`,
-      `Target receives: ${netAmount} ${asset}`,
-      `Fee: ${feeAmount} ${asset}`,
-    ].join("\n"),
-  );
-  await runtime.interaction.approve("Create this live Kraken withdrawal?", false);
-  const startedAt = new Date().toISOString();
-  const createResponse = await fundingClient.request("POST", "/funding/v1/withdrawals", {
-    query: { account_id: accountId },
-    body: {
-      scope: { method_id: methodId },
-      address_id: addressId,
-      amount: { asset_amount: { asset: { class: "currency", name: asset }, amount } },
-      fee: { quoted_fee: { token: feeToken }, fee_included: feeIncluded },
-      expected_address: address,
-    },
-    operation: "Create Kraken funding withdrawal",
-  });
-  if (createResponse.approval_request_id) {
-    if (!runtime.output.verbose) runtime.output.result(createResponse);
-    return;
-  }
-  const withdrawalId = requireText(
-    createResponse.withdrawal_id,
-    "Kraken withdrawal response did not contain withdrawal_id",
-  );
-  const pollIntervalSeconds = positiveNumber(
-    options.pollIntervalSeconds ?? firstValue(runtime.environment, "KRAKEN_POLL_INTERVAL_SECONDS"),
-    "KRAKEN_POLL_INTERVAL_SECONDS",
-    3,
-  );
-  const timeoutSeconds = positiveNumber(
-    options.timeoutSeconds ?? firstValue(runtime.environment, "KRAKEN_TIMEOUT_SECONDS"),
-    "KRAKEN_TIMEOUT_SECONDS",
-    1800,
-  );
-  const withdrawal = await waitForWithdrawal(
-    fundingClient,
-    withdrawalId,
-    methodId,
-    asset,
-    accountId,
-    startedAt,
-    pollIntervalSeconds,
-    timeoutSeconds,
-  );
-  if (!runtime.output.verbose) runtime.output.result(withdrawal);
 }
 
 async function selectWithdrawalMethod(
@@ -233,7 +288,11 @@ async function selectWithdrawalMethod(
   configuredMethodId: string | undefined,
 ): Promise<KrakenFundingMethod> {
   const response = await client.request("GET", "/funding/v1/methods/withdraw", {
-    query: { asset: { class: "currency", name: asset }, account_id: accountId, limit: 500 },
+    query: {
+      asset: { class: "currency", name: asset },
+      account_id: accountId,
+      limit: 500,
+    },
     operation: "List Kraken withdrawal funding methods",
   });
   const methods = requireArray<KrakenFundingMethod>(
@@ -252,7 +311,9 @@ async function selectWithdrawalMethod(
       name: [
         method.network?.network_name ?? method.method_name ?? "Unnamed network",
         method.minimum_amount ? `minimum ${method.minimum_amount}` : undefined,
-      ].filter(Boolean).join(" · "),
+      ]
+        .filter(Boolean)
+        .join(" · "),
       value: requireText(method.method_id, "Kraken withdrawal method has no method_id"),
     })),
   );
@@ -267,15 +328,22 @@ async function selectExistingAddress(
   configuredAddressId: string | undefined,
 ): Promise<KrakenFundingAddress> {
   const response = await client.request("GET", "/funding/v1/addresses", {
-    query: { scope: { method_id: methodId }, account_id: accountId, limit: 500 },
+    query: {
+      scope: { method_id: methodId },
+      account_id: accountId,
+      limit: 500,
+    },
     operation: "List Kraken onchain target addresses",
   });
-  const addresses = (Object.keys(response).length === 0
-    ? []
-    : requireArray<KrakenFundingAddress>(response.addresses, "Kraken address response did not contain addresses"))
-    .filter((address) => address.verified && address.address_details?.crypto?.address);
+  const addresses = (
+    Object.keys(response).length === 0
+      ? []
+      : requireArray<KrakenFundingAddress>(response.addresses, "Kraken address response did not contain addresses")
+  ).filter((address) => address.verified && address.address_details?.crypto?.address);
   if (!addresses.length) {
-    throw new UsageError("No verified targets exist for this network; register one from the Kraken withdrawal menu first");
+    throw new UsageError(
+      "No verified targets exist for this network; register one from the Kraken withdrawal menu first",
+    );
   }
   if (configuredAddressId) {
     const configured = addresses.find((address) => address.address_id === configuredAddressId);
@@ -289,7 +357,9 @@ async function selectExistingAddress(
         address.name ?? "Unnamed target",
         address.address_details?.crypto?.address,
         address.address_details?.crypto?.memo ?? address.address_details?.crypto?.tag,
-      ].filter(Boolean).join(" · "),
+      ]
+        .filter(Boolean)
+        .join(" · "),
       value: requireText(address.address_id, "Kraken target has no address_id"),
     })),
   );
@@ -305,6 +375,7 @@ async function waitForWithdrawal(
   startedAt: string,
   pollIntervalSeconds: number,
   timeoutSeconds: number,
+  dashboard?: KrakenDashboard,
 ): Promise<KrakenFundingWithdrawal> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -318,14 +389,21 @@ async function waitForWithdrawal(
       },
       operation: "List Kraken funding withdrawals",
     });
-    const withdrawals = Object.keys(response).length === 0
-      ? []
-      : requireArray<KrakenFundingWithdrawal>(
-          response.withdrawals,
-          "Kraken withdrawal-history response did not contain withdrawals",
-        );
+    const withdrawals =
+      Object.keys(response).length === 0
+        ? []
+        : requireArray<KrakenFundingWithdrawal>(
+            response.withdrawals,
+            "Kraken withdrawal-history response did not contain withdrawals",
+          );
     const withdrawal = withdrawals.find((candidate) => candidate.withdrawal_id === withdrawalId);
     const status = withdrawal?.status?.toLowerCase();
+    dashboard?.update(
+      "settle",
+      "Waiting for the Kraken withdrawal to complete",
+      withdrawal ?? { withdrawalId, status: "pending" },
+      `Status: ${status ?? "pending"}`,
+    );
     if (status === "success") return withdrawal!;
     if (status === "failed") throw new UsageError(`Kraken withdrawal ${withdrawalId} failed`);
     await Bun.sleep(pollIntervalSeconds * 1000);
@@ -343,7 +421,7 @@ async function requiredInput(
 }
 
 async function requiredPositiveAmount(runtime: KrakenRuntime, suppliedValue: string | undefined): Promise<string> {
-  const configured = suppliedValue ?? firstValue(runtime.environment, "KRAKEN_WITHDRAW_AMOUNT");
+  const configured = suppliedValue;
   const amount = runtime.interaction.interactive
     ? await runtime.interaction.text("USDC amount", configured)
     : configured;
@@ -358,11 +436,6 @@ function amountFrom(value: unknown, name: string): string {
   return requireText(record.amount, `Kraken ${name} did not contain amount`);
 }
 
-function showMenuError(runtime: KrakenRuntime, error: unknown): void {
-  if (error instanceof CancelledError) runtime.output.info(error.message);
-  else if (error instanceof Error) runtime.output.error(error.message);
-  else runtime.output.error(String(error));
-}
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new UsageError(message);

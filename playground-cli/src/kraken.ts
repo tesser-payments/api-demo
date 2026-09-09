@@ -40,7 +40,7 @@ export class KrakenNonce {
   private lastValue = 0;
 
   next(): string {
-    const value = Math.max(Date.now(), this.lastValue + 1);
+    const value = Math.max(Date.now() * 1000, this.lastValue + 1);
     this.lastValue = value;
     return String(value);
   }
@@ -113,15 +113,16 @@ export class KrakenFundingClient implements KrakenFundingApi {
       body,
       this.configuration.apiSecret,
     );
+    const headers = {
+      accept: "application/json",
+      "api-key": this.configuration.apiKey,
+      "api-nonce": nonce,
+      "api-sign": signature,
+      ...(request.body === undefined ? {} : { "content-type": "application/json" }),
+    };
     const response = await this.requestFunction(`${this.configuration.baseUrl}${signedPath}`, {
       method,
-      headers: {
-        accept: "application/json",
-        "api-key": this.configuration.apiKey,
-        "api-nonce": nonce,
-        "api-sign": signature,
-        ...(request.body === undefined ? {} : { "content-type": "application/json" }),
-      },
+      headers,
       body: request.body === undefined ? undefined : body,
       signal: AbortSignal.timeout(this.configuration.timeoutSeconds * 1000),
     });
@@ -136,8 +137,8 @@ export class KrakenFundingClient implements KrakenFundingApi {
     }
     this.output.exchange(
       request.operation,
-      { method, path: signedPath, body: request.body },
-      { status: response.status, body: responseBody },
+      { method, path: signedPath, headers, body: request.body },
+      { status: response.status, headers: Object.fromEntries(response.headers), body: responseBody },
     );
     if (!response.ok) {
       throw new ApiError(
@@ -177,17 +178,21 @@ export class KrakenSpotClient implements KrakenSpotApi {
     const signedPath = query.size ? `${path}?${query}` : path;
     const privateRequest = path.startsWith("/0/private/");
     const nonce = privateRequest ? this.nonce.next() : undefined;
-    const body = privateRequest ? JSON.stringify({ nonce, ...request.body }) : undefined;
+    const bodyPayload = privateRequest
+      ? { ...request.body, nonce: Number(nonce) }
+      : undefined;
+    const body = bodyPayload ? JSON.stringify(bodyPayload) : undefined;
+    const headers: Record<string, string> = privateRequest
+      ? {
+          accept: "application/json",
+          "api-key": this.configuration.apiKey,
+          "api-sign": createKrakenSpotSignature(path, nonce!, body!, this.configuration.apiSecret),
+          "content-type": "application/json",
+        }
+      : { accept: "application/json" };
     const response = await this.requestFunction(`${this.configuration.baseUrl}${signedPath}`, {
       method,
-      headers: privateRequest
-        ? {
-            accept: "application/json",
-            "api-key": this.configuration.apiKey,
-            "api-sign": createKrakenSpotSignature(path, nonce!, body!, this.configuration.apiSecret),
-            "content-type": "application/json",
-          }
-        : { accept: "application/json" },
+      headers,
       body,
       signal: AbortSignal.timeout(this.configuration.timeoutSeconds * 1000),
     });
@@ -202,8 +207,8 @@ export class KrakenSpotClient implements KrakenSpotApi {
     }
     this.output.exchange(
       request.operation,
-      { method, path: signedPath, body: request.body },
-      { status: response.status, body: responseBody },
+      { method, path: signedPath, headers, body: bodyPayload },
+      { status: response.status, headers: Object.fromEntries(response.headers), body: responseBody },
     );
     if (!response.ok) {
       throw new ApiError(

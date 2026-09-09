@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Environment } from "../src/config.ts";
+import type { TesserClient } from "../src/http.ts";
 import type { Choice, Interaction } from "../src/interaction.ts";
 import { Output } from "../src/output.ts";
+import type { Runtime } from "../src/runtime.ts";
 import type { KrakenRuntime } from "../src/workflows/kraken.ts";
-import { runKrakenMenu } from "../src/workflows/kraken-menu.ts";
+import { runKrakenCliOnlyMenu, runKrakenMenu } from "../src/workflows/kraken-menu.ts";
 import { runKrakenWithdrawMenu } from "../src/workflows/kraken-withdraw.ts";
 
 describe("Kraken menus", () => {
@@ -14,10 +16,25 @@ describe("Kraken menus", () => {
 
     expect(interaction.labels).toEqual(["Kraken"]);
     expect(interaction.choiceNames).toEqual([
+      "Register secrets",
+      "BRL deposit through Tesser",
       "Balances",
-      "Deposit",
-      "Swap USD to USDC",
+      "Direct Funding API deposit",
+      "Swap BRL or USD to USDC",
       "Withdraw USDC",
+      "CLI-only prototypes",
+      "Back",
+    ]);
+  });
+
+  test("keeps CLI-only workflows in their own submenu", async () => {
+    const interaction = new BackInteraction();
+
+    await runKrakenCliOnlyMenu(runtime(interaction));
+
+    expect(interaction.labels).toEqual(["Kraken CLI-only prototypes"]);
+    expect(interaction.choiceNames).toEqual([
+      "BRL-to-USDC deposit through Kraken",
       "Back",
     ]);
   });
@@ -70,10 +87,19 @@ class BackInteraction implements Interaction {
   }
 }
 
-function runtime(interaction: Interaction): KrakenRuntime {
-  return {
+function runtime(interaction: Interaction): Runtime & KrakenRuntime & {
+  runtime(operation: string, additionalVariables?: readonly string[]): Runtime;
+  krakenRuntime(operation: string): KrakenRuntime;
+} {
+  const baseRuntime = {
     environment: {} as Environment,
     interaction,
     output: new Output("json", false),
+    client: {} as TesserClient,
+  };
+  return {
+    ...baseRuntime,
+    runtime: () => baseRuntime,
+    krakenRuntime: () => baseRuntime,
   };
 }

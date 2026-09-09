@@ -6,6 +6,24 @@ import { UsageError } from "./errors.ts";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
+export const tesserEnvironmentVariables = [
+  "TESSER_BASE_URL",
+  "TESSER_AUTH_URL",
+  "TESSER_CLIENT_ID",
+  "TESSER_CLIENT_SECRET",
+] as const;
+
+export const signingEnvironmentVariables = [
+  "SIGNING_PUBLIC_KEY",
+  "SIGNING_PRIVATE_KEY",
+  "SIGNING_ENCLAVE_ID",
+] as const;
+
+export const krakenEnvironmentVariables = [
+  "KRAKEN_API_KEY",
+  "KRAKEN_API_SECRET",
+] as const;
+
 const tesserSchema = z.object({
   TESSER_BASE_URL: z.url(),
   TESSER_AUTH_URL: z.url(),
@@ -24,7 +42,10 @@ const signingSchema = z.object({
 const krakenSchema = z.object({
   KRAKEN_API_KEY: z.string().min(1),
   KRAKEN_API_SECRET: z.string().min(1),
-  KRAKEN_BASE_URL: z.url().default("https://api.kraken.com"),
+  KRAKEN_BASE_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.url().default("https://api.kraken.com"),
+  ),
   KRAKEN_REQUEST_TIMEOUT_SECONDS: z.coerce.number().positive().default(30),
 });
 
@@ -50,10 +71,27 @@ export type KrakenConfiguration = {
   timeoutSeconds: number;
 };
 
+function emptyStringToUndefined(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  return value.trim() || undefined;
+}
+
 function validationMessage(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join(".") || "configuration"}: ${issue.message}`)
     .join(", ");
+}
+
+export function requireEnvironmentVariables(
+  environment: Environment,
+  operation: string,
+  names: readonly string[],
+): void {
+  const missingNames = names.filter((name) => !environment[name]?.trim());
+  if (!missingNames.length) return;
+  throw new UsageError(
+    [`Cannot run ${operation}.`, "", "Missing environment variables:", ...missingNames.map((name) => `- ${name}`)].join("\n"),
+  );
 }
 
 export function loadEnvironment(

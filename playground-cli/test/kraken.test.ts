@@ -44,7 +44,7 @@ describe("Kraken Funding API", () => {
     );
   });
 
-  test("sends Funding Beta authentication headers for the encoded request path", async () => {
+  test("sends the documented funding-method parameters and authentication headers", async () => {
     const request = mock(
       async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response('{"methods":[]}', {
@@ -64,13 +64,16 @@ describe("Kraken Funding API", () => {
     );
 
     await client.request("GET", "/funding/v1/methods/deposit", {
-      query: { asset: { class: "currency", name: "BRL" } },
+      query: {
+        asset: { class: "currency", name: "CAD" },
+        limit: 500,
+      },
       operation: "List methods",
     });
 
     const [url, init] = request.mock.calls[0]!;
     const headers = new Headers(init?.headers);
-    const signedPath = "/funding/v1/methods/deposit?asset%5Bclass%5D=currency&asset%5Bname%5D=BRL";
+    const signedPath = "/funding/v1/methods/deposit?asset%5Bclass%5D=currency&asset%5Bname%5D=CAD&limit=500";
     const nonce = headers.get("api-nonce")!;
     expect(url).toBe(`https://api.kraken.com${signedPath}`);
     expect(headers.get("api-key")).toBe("api-key");
@@ -85,8 +88,8 @@ describe("Kraken Spot API", () => {
     const now = spyOn(Date, "now").mockReturnValue(1000);
     const nonce = new KrakenNonce();
 
-    expect(nonce.next()).toBe("1000");
-    expect(nonce.next()).toBe("1001");
+    expect(nonce.next()).toBe("1000000");
+    expect(nonce.next()).toBe("1000001");
     now.mockRestore();
   });
 
@@ -118,15 +121,57 @@ describe("Kraken Spot API", () => {
     const headers = new Headers(init?.headers);
     const body = String(init?.body);
     const nonce = JSON.parse(body).nonce;
+    expect(typeof nonce).toBe("number");
     expect(url).toBe("https://api.kraken.com/0/private/BalanceEx");
     expect(headers.get("api-key")).toBe("api-key");
     expect(headers.get("api-sign")).toBe(
-      createKrakenSpotSignature("/0/private/BalanceEx", nonce, body, "c2VjcmV0"),
+      createKrakenSpotSignature("/0/private/BalanceEx", String(nonce), body, "c2VjcmV0"),
     );
   });
 });
 
 describe("Kraken BRL/PIX workflow", () => {
+  test("asks for and returns an existing successful deposit without requesting new funding", async () => {
+    const existingDeposit = {
+      deposit_id: "existing-deposit",
+      method_id: "pix-method",
+      status: "success",
+      create_time: "2026-09-04T12:00:00Z",
+      amount: { asset: { class: "currency", name: "BRL" }, amount: "50" },
+    };
+    const responses: Record<string, unknown>[] = [
+      {
+        methods: [
+          {
+            asset: { class: "currency", name: "BRL" },
+            method_id: "pix-method",
+            method_name: "Pix (PayAmigo)",
+          },
+        ],
+      },
+      { deposits: [existingDeposit] },
+    ];
+    const request = mock(async () => responses.shift()!);
+    const interaction = new ExistingDepositInteraction();
+
+    const result = await runKraken(
+      runtime(interaction),
+      {
+        methodId: "pix-method",
+        embedded: true,
+        allowExistingDeposit: true,
+      },
+      { request } as KrakenFundingApi,
+    );
+
+    expect(result).toEqual(existingDeposit);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(interaction.choiceLabels).toEqual([
+      "Kraken deposit source",
+      "Select the successful Kraken BRL deposit",
+    ]);
+  });
+
   test("claims fiat instructions and waits for the new deposit to succeed", async () => {
     const oldDeposit = {
       deposit_id: "old-deposit",
@@ -150,6 +195,7 @@ describe("Kraken BRL/PIX workflow", () => {
             method_id: "pix-method",
             method_name: "PIX",
             minimum_amount: "50",
+            deposit: { address_generation: { status: "unlimited" } },
           },
         ],
       },
@@ -177,6 +223,13 @@ describe("Kraken BRL/PIX workflow", () => {
 
     expect(request).toHaveBeenCalledTimes(5);
     expect(request.mock.calls[0]?.[1]).toBe("/funding/v1/methods/deposit");
+    expect(request.mock.calls[0]?.[2]).toEqual({
+      query: {
+        asset: { class: "currency", name: "BRL" },
+        limit: 500,
+      },
+      operation: "List Kraken deposit funding methods",
+    });
     expect(request.mock.calls[2]?.[0]).toBe("PUT");
     expect(request.mock.calls[2]?.[1]).toBe("/funding/v1/deposit/address");
     expect(interaction.choiceLabels).toEqual(["Select the Kraken BRL deposit method"]);
@@ -194,6 +247,7 @@ describe("Kraken BRL/PIX workflow", () => {
             asset: { class: "currency", name: "BRL" },
             method_id: "pix-method",
             method_name: "PIX",
+            deposit: { address_generation: { status: "unlimited" } },
           },
         ],
       },
@@ -224,14 +278,15 @@ describe("Kraken BRL/PIX workflow", () => {
     errorOutput.mockRestore();
   });
 
-  test("uses Kraken Web for Pix (PayAmigo) and waits until the operator is ready", async () => {
+  test("uses Kraken Web when the funding method cannot generate deposit instructions", async () => {
     const responses: Record<string, unknown>[] = [
       {
         methods: [
           {
             asset: { class: "currency", name: "BRL" },
-            method_id: "pix-method",
-            method_name: "Pix (PayAmigo)",
+            method_id: "wire-method",
+            method_name: "Wire Transfer",
+            deposit: {},
           },
         ],
       },
@@ -240,7 +295,7 @@ describe("Kraken BRL/PIX workflow", () => {
         deposits: [
           {
             deposit_id: "new-deposit",
-            method_id: "pix-method",
+            method_id: "wire-method",
             status: "success",
           },
         ],
@@ -271,6 +326,7 @@ describe("Kraken BRL/PIX workflow", () => {
     );
     expect(manualInstruction).toBeDefined();
     expect(String(manualInstruction?.[0])).toContain("Complete the BRL deposit");
+    expect(String(manualInstruction?.[0])).toContain("Wire Transfer");
     expect(String(manualInstruction?.[0])).not.toContain('"event"');
     expect(errorOutput.mock.calls.some((call) => String(call[0]).includes("kraken.deposit.detected"))).toBeFalse();
     expect(standardOutput).not.toHaveBeenCalled();
@@ -286,6 +342,37 @@ class RecordingInteraction extends NonInteractiveInteraction {
     this.choiceLabels.push(label);
     return super.choose(label, choices);
   }
+}
+
+class ExistingDepositInteraction implements Interaction {
+  readonly interactive = true;
+  readonly choiceLabels: string[] = [];
+
+  async text(label: string, value?: string, defaultValue?: string): Promise<string> {
+    const resolved = value?.trim() || defaultValue?.trim();
+    if (!resolved) throw new UsageError(`${label} is required`);
+    return resolved;
+  }
+
+  async optionalText(_label: string, defaultValue?: string): Promise<string | undefined> {
+    return defaultValue;
+  }
+
+  async secret(label: string, value?: string): Promise<string> {
+    if (!value) throw new UsageError(`${label} is required`);
+    return value;
+  }
+
+  async choose<T>(label: string, choices: Choice<T>[]): Promise<T> {
+    this.choiceLabels.push(label);
+    return choices[0]!.value;
+  }
+
+  async confirm(_label: string, defaultValue = false): Promise<boolean> {
+    return defaultValue;
+  }
+
+  async approve(): Promise<void> {}
 }
 
 class ManualPixInteraction implements Interaction {

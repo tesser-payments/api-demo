@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { firstValue, positiveNumber } from "../config.ts";
+import { firstValue, positiveNumber, requireEnvironmentVariables } from "../config.ts";
 import { ApiError, UsageError } from "../errors.ts";
 import { parseResponseBody, requireData, requireSuccess } from "../http.ts";
 import type { Runtime } from "../runtime.ts";
@@ -12,10 +12,15 @@ const openFxKeySchema = z.object({
   privateKey: z.string().min(1),
 });
 
+type ProviderRuntime = Pick<Runtime, "environment" | "interaction" | "output">;
+
 export async function registerOpenFx(
   runtime: Runtime,
   apiKeyFileInput: string | undefined,
 ): Promise<void> {
+  requireEnvironmentVariables(runtime.environment, "Workspace: register OpenFX secrets", [
+    "OPENFX_WEBHOOK_SIGNING_KEY",
+  ]);
   const apiKeyFile = await runtime.interaction.text("OpenFX API key JSON path", apiKeyFileInput);
   let raw: unknown;
   try {
@@ -29,10 +34,7 @@ export async function registerOpenFx(
   if (!privateKey.startsWith("-----BEGIN") || !privateKey.includes("PRIVATE KEY-----")) {
     throw new UsageError("OpenFX API key file contains an invalid privateKey");
   }
-  const webhookSecret = await runtime.interaction.secret(
-    "OpenFX webhook signing secret",
-    firstValue(runtime.environment, "OPENFX_WEBHOOK_SIGNING_KEY"),
-  );
+  const webhookSecret = firstValue(runtime.environment, "OPENFX_WEBHOOK_SIGNING_KEY")!;
   await runtime.interaction.approve("registering the OpenFX credentials");
   const response = await runtime.client.request("POST", "/v1/organizations/secrets", {
     headers: { "x-api-client": "true" },
@@ -69,9 +71,14 @@ export async function showOpenFxWebhookUrl(runtime: Runtime): Promise<void> {
 }
 
 export async function patchBasisTheory(
-  runtime: Runtime,
+  runtime: ProviderRuntime,
   tokenOverride: string | undefined,
 ): Promise<void> {
+  requireEnvironmentVariables(runtime.environment, "Provider experiments: patch OpenFX token", [
+    "BASIS_THEORY_API_KEY",
+    "OPENFX_WEBHOOK_SIGNING_KEY",
+    ...(tokenOverride ? [] : ["BASIS_THEORY_TOKEN"]),
+  ]);
   const token = await runtime.interaction.secret(
     "Basis Theory token",
     tokenOverride ?? firstValue(runtime.environment, "BASIS_THEORY_TOKEN"),
@@ -85,11 +92,7 @@ export async function patchBasisTheory(
     firstValue(runtime.environment, "OPENFX_WEBHOOK_SIGNING_KEY"),
   );
   const baseUrl = firstValue(runtime.environment, "BASIS_THEORY_BASE_URL") ?? "https://api.basistheory.com";
-  const timeoutSeconds = positiveNumber(
-    firstValue(runtime.environment, "TESSER_TIMEOUT_SECONDS"),
-    "TESSER_TIMEOUT_SECONDS",
-    30,
-  );
+  const timeoutSeconds = positiveNumber(undefined, "Basis Theory request timeout", 30);
   await runtime.interaction.approve("patching the Basis Theory OpenFX credentials");
   const url = `${baseUrl.replace(/\/$/, "")}/tokens/${encodeURIComponent(token)}`;
   let response: Response;
@@ -120,6 +123,55 @@ export async function patchBasisTheory(
   );
   if (!response.ok) throw new ApiError(`Basis Theory patch failed with HTTP ${response.status}`, response.status, body);
   runtime.output.result(body);
+}
+
+export async function deleteBasisTheory(
+  runtime: ProviderRuntime,
+  tokenOverride: string | undefined,
+): Promise<void> {
+  requireEnvironmentVariables(runtime.environment, "Provider experiments: delete Basis Theory token", [
+    "BASIS_THEORY_API_KEY",
+    ...(tokenOverride ? [] : ["BASIS_THEORY_TOKEN"]),
+  ]);
+  const token = await runtime.interaction.secret(
+    "Basis Theory token",
+    tokenOverride ?? firstValue(runtime.environment, "BASIS_THEORY_TOKEN"),
+  );
+  const apiKey = await runtime.interaction.secret(
+    "Basis Theory API key",
+    firstValue(runtime.environment, "BASIS_THEORY_API_KEY"),
+  );
+  const baseUrl = firstValue(runtime.environment, "BASIS_THEORY_BASE_URL") ?? "https://api.basistheory.com";
+  const timeoutSeconds = positiveNumber(undefined, "Basis Theory request timeout", 30);
+  await runtime.interaction.approve("deleting the Basis Theory token");
+  const url = `${baseUrl.replace(/\/$/, "")}/tokens/${encodeURIComponent(token)}`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "BT-API-KEY": apiKey,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(timeoutSeconds * 1000),
+    });
+  } catch (cause) {
+    throw new ApiError("Basis Theory DELETE request failed", undefined, undefined, { cause });
+  }
+  const body = await parseResponseBody(response);
+  runtime.output.exchange(
+    "Delete Basis Theory token",
+    {
+      method: "DELETE",
+      url: `${baseUrl.replace(/\/$/, "")}/tokens/<redacted>`,
+      headers: { "BT-API-KEY": apiKey },
+    },
+    { status: response.status, body },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new ApiError(`Basis Theory delete failed with HTTP ${response.status}`, response.status, body);
+  }
+  runtime.output.result({ deleted: response.ok, alreadyDeleted: response.status === 404 });
 }
 
 export type BankAccountOptions = {
