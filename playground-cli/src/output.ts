@@ -20,6 +20,7 @@ const sensitiveNames = new Set([
   "signature",
   "signing_private_key",
   "tempo_turnkey_private_key",
+  "tempo_sponsor_private_key",
   "signed_transaction",
   "signedtransaction",
   "raw_transaction",

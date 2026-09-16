@@ -1,6 +1,7 @@
-import { getAddress, isAddress, parseUnits, type Address } from "viem";
+import { getAddress, isAddress, parseUnits, type Address, type PrivateKeyAccount } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { z } from "zod";
-import { firstValue, type Environment } from "../config.ts";
+import { firstValue, requireEnvironmentVariables, type Environment } from "../config.ts";
 import { UsageError } from "../errors.ts";
 
 export const tempoNetworks = {
@@ -50,6 +51,17 @@ export type TempoConfiguration = {
   rpcUrl: string;
   explorerUrl: string;
 };
+
+export function getTempoSponsorAccount(environment: Environment): PrivateKeyAccount {
+  requireEnvironmentVariables(environment, "Tempo sponsorship", ["TEMPO_SPONSOR_PRIVATE_KEY"]);
+  const privateKey = firstValue(environment, "TEMPO_SPONSOR_PRIVATE_KEY");
+  try {
+    if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) throw new Error();
+    return privateKeyToAccount(privateKey as `0x${string}`);
+  } catch {
+    throw new UsageError("TEMPO_SPONSOR_PRIVATE_KEY must contain a valid 0x-prefixed 32-byte private key");
+  }
+}
 
 export function getTempoConfiguration(environment: Environment, network?: string): TempoConfiguration {
   const selected = networkSchema.safeParse(network);
