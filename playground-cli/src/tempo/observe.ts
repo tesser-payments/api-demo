@@ -1,10 +1,30 @@
-import { decodeEventLog, type Address, type Hex } from "viem";
+import { decodeEventLog, formatUnits, type Address, type Hex } from "viem";
 import { PlaygroundError } from "../errors.ts";
-import { validatePrepared, type BroadcastRecord } from "./artifacts.ts";
+import { transferBalanceOwners, validatePrepared, type BroadcastRecord, type PreparedTransaction } from "./artifacts.ts";
 import { feeManagerAddress } from "./config.ts";
 import { tokenAbi, type BalanceSnapshot, type TempoReceipt, type TempoRpc } from "./rpc.ts";
 
-export function tokenMovements(receipt: TempoReceipt) {
+type TokenMovement = {
+  token_address: Address;
+  from: Address;
+  to: Address;
+  amount_units: string;
+  log_index: string;
+  touches_fee_manager: boolean;
+};
+
+type SponsorFeeEvidence = {
+  verified: boolean;
+  payer: Address;
+  token: Address;
+  reason?: string;
+  debit_units?: string;
+  refund_units?: string;
+  net_fee_units?: string;
+  net_fee?: string;
+};
+
+export function tokenMovements(receipt: TempoReceipt): TokenMovement[] {
   return receipt.logs.flatMap((log) => {
     if (log.removed) return [];
     try {
@@ -22,6 +42,57 @@ export function tokenMovements(receipt: TempoReceipt) {
       return [];
     }
   });
+}
+
+function sponsorFeeEvidence(receipt: TempoReceipt, movements: TokenMovement[], prepared?: PreparedTransaction): SponsorFeeEvidence | undefined {
+  if (prepared?.fee_payer !== "sponsor") return undefined;
+  const expected = { payer: prepared.sponsor_address!, token: prepared.fee_asset!.token_address };
+  if (receipt.feePayer?.toLowerCase() !== expected.payer.toLowerCase()) {
+    return { ...expected, verified: false, reason: "Receipt fee payer does not match the prepared sponsor" };
+  }
+  if (receipt.feeToken?.toLowerCase() !== expected.token.toLowerCase()) {
+    return { ...expected, verified: false, reason: "Receipt fee token does not match AlphaUSD" };
+  }
+  let debit = 0n;
+  let refund = 0n;
+  let hasDebit = false;
+  for (const movement of movements) {
+    if (!movement.touches_fee_manager) continue;
+    const from = movement.from.toLowerCase();
+    const to = movement.to.toLowerCase();
+    const isDebit = from === expected.payer.toLowerCase() && to === feeManagerAddress;
+    const isRefund = from === feeManagerAddress && to === expected.payer.toLowerCase();
+    if (!isDebit && !isRefund) continue;
+    if (movement.token_address.toLowerCase() !== expected.token.toLowerCase()) {
+      return { ...expected, verified: false, reason: "Sponsor fee movements use an unexpected token" };
+    }
+    if (isDebit) {
+      debit += BigInt(movement.amount_units);
+      hasDebit = true;
+    } else {
+      refund += BigInt(movement.amount_units);
+    }
+  }
+  if (!hasDebit || refund > debit) {
+    return { ...expected, verified: false, reason: "Sponsor debit and refund evidence is missing or inconsistent" };
+  }
+  return {
+    ...expected,
+    verified: true,
+    debit_units: debit.toString(),
+    refund_units: refund.toString(),
+    net_fee_units: (debit - refund).toString(),
+    net_fee: formatUnits(debit - refund, prepared.fee_asset!.decimals),
+  };
+}
+
+function receiptBalanceOwners(receipt: TempoReceipt, movements: TokenMovement[], record?: BroadcastRecord): Address[] {
+  if (record) return transferBalanceOwners(record.prepared);
+  const recipients = movements.filter((movement) =>
+    !movement.touches_fee_manager && movement.from.toLowerCase() === receipt.from.toLowerCase());
+  const owners = [receipt.from, ...recipients.map((movement) => movement.to)];
+  if (receipt.feePayer) owners.push(receipt.feePayer);
+  return owners;
 }
 
 function balanceChanges(before: BalanceSnapshot, after: BalanceSnapshot) {
@@ -63,15 +134,13 @@ export async function observeReceipt(rpc: TempoRpc, hash: Hex, record?: Broadcas
     movement.to.toLowerCase() === record.prepared.destination.toLowerCase() &&
     movement.amount_units === record.prepared.amount_units) : undefined;
   const feeMovements = movements.filter((movement) => movement.touches_fee_manager);
+  const sponsorFee = sponsorFeeEvidence(receipt, movements, record?.prepared);
   const tokens = [...new Set([
     ...movements.map((movement) => movement.token_address.toLowerCase() as Address),
     ...(record?.before.balances.map((balance) => balance.token_address) ?? []),
     ...(receipt.feeToken ? [receipt.feeToken] : []),
   ])];
-  const owners = record ? [record.prepared.source, record.prepared.destination] : [
-    receipt.from,
-    ...movements.filter((movement) => !movement.touches_fee_manager && movement.from.toLowerCase() === receipt.from.toLowerCase()).map((movement) => movement.to),
-  ];
+  const owners = receiptBalanceOwners(receipt, movements, record);
   const metadata = await Promise.all(tokens.map(async (address) => {
     try {
       return await rpc.metadata(address, blockNumber);
@@ -105,6 +174,7 @@ export async function observeReceipt(rpc: TempoRpc, hash: Hex, record?: Broadcas
     block_hash: receipt.blockHash,
     observed_confirmations: (latestBlock.number >= blockNumber ? latestBlock.number - blockNumber + 1n : 0n).toString(),
     intended_transfer_verified: record ? receipt.status === "0x1" && transferMatched : undefined,
+    sponsorship_verified: sponsorFee?.verified,
     token_metadata: metadata,
     token_movements: movements,
     fee_evidence: {
@@ -113,6 +183,7 @@ export async function observeReceipt(rpc: TempoRpc, hash: Hex, record?: Broadcas
       gas_used: BigInt(receipt.gasUsed).toString(),
       effective_gas_price: BigInt(receipt.effectiveGasPrice).toString(),
       transfers_touching_fee_manager: feeMovements,
+      sponsor_fee: sponsorFee,
       transfer_evidence: feeMovements.length ? "present; inspect debits and refunds separately" : "not present; no zero-fee conclusion",
     },
     balances,

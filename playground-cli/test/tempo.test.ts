@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionResult, fromRlp, keccak256,
+  decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionResult, fromRlp, getAddress, keccak256,
   parseSignature, toHex, toRlp, zeroAddress, type Address, type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -11,7 +11,7 @@ import { Transaction } from "viem/tempo";
 import { NonInteractiveInteraction } from "../src/interaction.ts";
 import { Output, sanitize } from "../src/output.ts";
 import {
-  preparedSchema, readArtifact, signedSchema, validatePrepared, validateSignature, writeArtifact,
+  preparedSchema, readArtifact, signedSchema, sponsorTempoTransaction, validatePrepared, validateSignature, writeArtifact,
   type PreparedTransaction,
 } from "../src/tempo/artifacts.ts";
 import { feeManagerAddress, getTempoConfiguration, moderatoFeeTokens, parseAmount, tempoNetworks } from "../src/tempo/config.ts";
@@ -23,6 +23,8 @@ import {
 } from "../src/tempo/workflows.ts";
 
 const account = privateKeyToAccount(toHex(1n, { size: 32 }));
+const sponsorKey = toHex(2n, { size: 32 });
+const sponsor = privateKeyToAccount(sponsorKey);
 const destination = "0x2222222222222222222222222222222222222222";
 const activityId = "11111111-1111-4111-8111-111111111111";
 const organizationId = "22222222-2222-4222-8222-222222222222";
@@ -51,6 +53,7 @@ function runtime() {
       TEMPO_TURNKEY_PUBLIC_KEY: "test-api-public-key",
       TEMPO_TURNKEY_PRIVATE_KEY: "test-api-private-secret",
       TEMPO_TURNKEY_ORGANIZATION_ID: organizationId,
+      TEMPO_SPONSOR_PRIVATE_KEY: "",
     },
     interaction: new NonInteractiveInteraction(),
     output: new RecordingOutput(),
@@ -80,6 +83,10 @@ class Providers {
   blockNumber = 100;
   receipt: Record<string, unknown> | null = null;
   submissionTimeout = false;
+  insufficientSponsorFunds = false;
+  sponsorAddress: Address | undefined;
+  sourceStartingBalance = 10_000_000n;
+  sponsorStartingBalance = 1_000_000n;
   estimateError = false;
   activityStatus = "ACTIVITY_STATUS_COMPLETED";
   preparedForActivity: PreparedTransaction | undefined;
@@ -104,6 +111,9 @@ class Providers {
     }
     this.calls.push({ method: body.method, params: body.params });
     if (body.method === "eth_sendRawTransaction" && this.submissionTimeout) throw new Error(`timeout: ${url} ${body.params[0]}`);
+    if (body.method === "eth_sendRawTransaction" && this.insufficientSponsorFunds) {
+      return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32000, message: "insufficient funds for fee payer" } });
+    }
     if (body.method === "eth_estimateGas" && this.estimateError) {
       return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32000, message: `insufficient funds at ${url}, private-secret` } });
     }
@@ -135,8 +145,7 @@ class Providers {
       if (this.historicalBalancesUnavailable) throw new Error("Archive unavailable");
       const [owner] = decoded.args;
       const after = block !== "latest" && BigInt(block) >= 101n;
-      const sourceBalance = 10_000_000n - (after && to.toLowerCase() === alphaUsd ? 1_000_000n : 0n) - (after && to.toLowerCase() === feeToken ? 100n : 0n);
-      const amount = owner.toLowerCase() === account.address.toLowerCase() ? sourceBalance : (after && to.toLowerCase() === alphaUsd ? 1_000_000n : 0n);
+      const amount = this.balance(owner, to, after);
       return encodeFunctionResult({ abi: tokenAbi, functionName: "balanceOf", result: amount });
     }
     const symbols: Record<string, string> = {
@@ -152,16 +161,34 @@ class Providers {
     throw new Error("Unexpected test contract call");
   }
 
+  balance(owner: Address, token: Address, after: boolean): bigint {
+    if (owner.toLowerCase() === account.address.toLowerCase()) {
+      let balance = this.sourceStartingBalance;
+      if (after && token.toLowerCase() === alphaUsd) balance -= 1_000_000n;
+      if (after && !this.sponsorAddress && token.toLowerCase() === feeToken) balance -= 100n;
+      return balance;
+    }
+    if (owner.toLowerCase() === this.sponsorAddress?.toLowerCase()) {
+      if (after && token.toLowerCase() === alphaUsd) return this.sponsorStartingBalance - 100n;
+      return this.sponsorStartingBalance;
+    }
+    if (after && token.toLowerCase() === alphaUsd) return 1_000_000n;
+    return 0n;
+  }
+
   mine(hash: Hex, status = "0x1", recipient: Address = destination) {
     this.blockNumber = 101;
+    const payer = this.sponsorAddress ?? account.address;
+    let paidToken: Address = feeToken;
+    if (this.sponsorAddress) paidToken = alphaUsd;
     this.receipt = {
       transactionHash: hash, blockHash: toHex(101, { size: 32 }), blockNumber: "0x65", status,
       from: account.address, to: alphaUsd, gasUsed: "0x186a0", effectiveGasPrice: "0x64",
-      feeToken, feePayer: account.address,
+      feeToken: paidToken, feePayer: payer,
       logs: [
-        transferLog(feeToken, account.address, feeManagerAddress, 150n, 0),
+        transferLog(paidToken, payer, feeManagerAddress, 150n, 0),
         ...(status === "0x1" ? [transferLog(alphaUsd, account.address, recipient, 1_000_000n, 1)] : []),
-        transferLog(feeToken, feeManagerAddress, account.address, 50n, 2),
+        transferLog(paidToken, feeManagerAddress, payer, 50n, 2),
       ],
     };
   }
@@ -191,6 +218,22 @@ async function sign(context: ReturnType<typeof fixture>, format: "tempo" | "eip1
   await signTempoTransfer(context.runtime, {
     network: "moderato", file: context.preparedFile, out: context.signedFile,
     turnkeyType: format === "tempo" ? "TRANSACTION_TYPE_TEMPO" : "TRANSACTION_TYPE_ETHEREUM",
+  }, context.dependencies);
+  return readArtifact(context.signedFile, signedSchema);
+}
+
+function sponsoredFixture() {
+  const context = fixture();
+  context.runtime.environment.TEMPO_SPONSOR_PRIVATE_KEY = sponsorKey;
+  context.providers.sponsorAddress = sponsor.address;
+  context.providers.sourceStartingBalance = 1_000_000n;
+  return context;
+}
+
+async function signSponsored(context: ReturnType<typeof fixture>) {
+  await prepare(context, { sponsored: true, feeToken: undefined });
+  await signTempoTransfer(context.runtime, {
+    network: "moderato", file: context.preparedFile, out: context.signedFile, turnkeyType: "TRANSACTION_TYPE_TEMPO",
   }, context.dependencies);
   return readArtifact(context.signedFile, signedSchema);
 }
@@ -442,19 +485,212 @@ describe("Tempo broadcast and receipt evidence", () => {
   });
 });
 
+describe("Tempo sponsorship", () => {
+  test("prepares a sponsored AlphaUSD payload without fee simulation or a sponsor nonce", async () => {
+    const context = sponsoredFixture();
+    context.providers.estimateError = true;
+    const prepared = await prepare(context, { sponsored: true, feeToken: undefined });
+    expect(prepared).toMatchObject({ fee_payer: "sponsor", sponsor_address: sponsor.address, gas_limit: "1000000", fee_asset: { token_address: getAddress(alphaUsd) } });
+    const transaction = Transaction.deserialize(prepared.unsigned_transaction as `0x76${string}`);
+    expect(transaction).toMatchObject({ chainId: 42431, nonceKey: 0n, gas: 1_000_000n, feePayerSignature: null });
+    expect(transaction.feeToken).toBeUndefined();
+    expect(transaction.calls).toHaveLength(1);
+    expect(context.providers.calls.filter((call) => call.method === "eth_getTransactionCount")).toEqual([
+      { method: "eth_getTransactionCount", params: [account.address, "pending"] },
+    ]);
+    expect(context.providers.calls.some((call) => call.method === "eth_estimateGas")).toBe(false);
+    expect(context.providers.turnkeyCalls).toHaveLength(0);
+    expect(readFileSync(context.preparedFile, "utf8")).not.toContain(sponsorKey);
+  });
+
+  test("saves both signatures, broadcasts the saved bytes once, and verifies sponsor debits minus refunds", async () => {
+    const context = sponsoredFixture();
+    const signed = await signSponsored(context);
+    expect(await validateSignature(signed.prepared, signed.signed_transaction)).toBe(signed.transaction_hash);
+    expect(keccak256(signed.signed_transaction)).toBe(signed.transaction_hash);
+    const transaction = Transaction.deserialize(signed.signed_transaction as `0x76${string}`);
+    expect(transaction.feePayerSignature).toBeTruthy();
+    expect(transaction.feeToken).toBe(alphaUsd);
+    const customerTransaction = Transaction.deserialize(await signedBytes(signed.prepared.unsigned_transaction) as `0x76${string}`);
+    expect(transaction.signature).toEqual(customerTransaction.signature);
+    expect(context.providers.turnkeyCalls[0]?.body.parameters).toMatchObject({
+      type: "TRANSACTION_TYPE_TEMPO", unsignedTransaction: signed.prepared.unsigned_transaction, signWith: account.address,
+    });
+    context.runtime.environment.TEMPO_SPONSOR_PRIVATE_KEY = "";
+    const options = { network: "moderato", file: context.signedFile, record: context.recordFile };
+    await broadcastTempoTransfer(context.runtime, options, context.dependencies);
+    await broadcastTempoTransfer(context.runtime, options, context.dependencies);
+    const receipt = context.runtime.output.results.at(-1);
+    expect(receipt).toMatchObject({
+      status: "success", intended_transfer_verified: true, sponsorship_verified: true,
+      fee_evidence: { sponsor_fee: { verified: true, payer: sponsor.address, token: getAddress(alphaUsd), debit_units: "150", refund_units: "50", net_fee_units: "100", net_fee: "0.0001" } },
+      balances: { available: true, changes: expect.arrayContaining([
+        expect.objectContaining({ owner: account.address.toLowerCase(), before_units: "1000000", after_units: "0", change_units: "-1000000" }),
+        expect.objectContaining({ owner: destination, change_units: "1000000" }),
+        expect.objectContaining({ owner: sponsor.address.toLowerCase(), change_units: "-100" }),
+      ]) },
+    });
+    expect(context.providers.calls.filter((call) => call.method === "eth_sendRawTransaction")).toEqual([
+      { method: "eth_sendRawTransaction", params: [signed.signed_transaction] },
+    ]);
+    expect(context.providers.calls.filter((call) => call.method === "eth_getTransactionCount").every((call) => call.params[0] === account.address)).toBe(true);
+    expect(context.providers.turnkeyCalls).toHaveLength(1);
+    expect(readFileSync(context.signedFile, "utf8")).not.toContain(sponsorKey);
+    expect(JSON.stringify(context.runtime.output)).not.toContain(sponsorKey);
+  });
+
+  test("normalizes the Turnkey recovery byte before saving and broadcasting sponsored bytes", async () => {
+    const context = sponsoredFixture();
+    const prepared = await prepare(context, { sponsored: true, feeToken: undefined });
+    const canonical = await signedBytes(prepared.unsigned_transaction);
+    const parity = Number.parseInt(canonical.slice(-2), 16) - 27;
+    context.providers.signedOverride = `${canonical.slice(0, -2)}${toHex(parity, { size: 1 }).slice(2)}` as Hex;
+    await signTempoTransfer(context.runtime, {
+      network: "moderato", file: context.preparedFile, out: context.signedFile, turnkeyType: "TRANSACTION_TYPE_TEMPO",
+    }, context.dependencies);
+    const signed = readArtifact(context.signedFile, signedSchema);
+    expect(signed.signed_transaction).toBe(await sponsorTempoTransaction(prepared, canonical, sponsor));
+    expect(signed.transaction_hash).toBe(keccak256(signed.signed_transaction));
+  });
+
+  test("rejects missing or invalid sponsor keys without showing them or calling providers", async () => {
+    for (const privateKey of ["", "invalid-private-secret", toHex(0n, { size: 32 })]) {
+      const context = sponsoredFixture();
+      context.runtime.environment.TEMPO_SPONSOR_PRIVATE_KEY = privateKey;
+      await expect(prepare(context, { sponsored: true, feeToken: undefined })).rejects.toThrow("TEMPO_SPONSOR_PRIVATE_KEY");
+      expect(context.providers.calls).toHaveLength(0);
+      expect(context.providers.turnkeyCalls).toHaveLength(0);
+      expect(JSON.stringify(context.runtime.output)).not.toContain("invalid-private-secret");
+    }
+  });
+
+  test("rejects unsupported sponsored formats, currencies, and fee tokens", async () => {
+    const cases: TempoOptions[] = [
+      { format: "eip1559" },
+      { currency: "USDT" },
+      { tokenAddress: feeToken },
+      { feeToken },
+      { network: "mainnet" },
+    ];
+    for (const invalid of cases) {
+      const context = sponsoredFixture();
+      await expect(prepare(context, { sponsored: true, feeToken: undefined, ...invalid })).rejects.toThrow();
+      expect(context.providers.turnkeyCalls).toHaveLength(0);
+      expect(context.providers.calls.some((call) => call.method === "eth_sendRawTransaction")).toBe(false);
+    }
+  });
+
+  test("rejects a changed sponsor or signing type before asking Turnkey to sign", async () => {
+    const context = sponsoredFixture();
+    await prepare(context, { sponsored: true, feeToken: undefined });
+    const options = { network: "moderato", file: context.preparedFile, out: context.signedFile, turnkeyType: "TRANSACTION_TYPE_TEMPO" };
+    context.runtime.environment.TEMPO_SPONSOR_PRIVATE_KEY = toHex(3n, { size: 32 });
+    await expect(signTempoTransfer(context.runtime, options, context.dependencies)).rejects.toThrow("prepared sponsor");
+    context.runtime.environment.TEMPO_SPONSOR_PRIVATE_KEY = sponsorKey;
+    await expect(signTempoTransfer(context.runtime, { ...options, turnkeyType: "TRANSACTION_TYPE_ETHEREUM" }, context.dependencies)).rejects.toThrow("TRANSACTION_TYPE_TEMPO");
+    expect(context.providers.turnkeyCalls).toHaveLength(0);
+  });
+
+  test("rejects altered customer execution fields before signing with the sponsor", async () => {
+    const context = sponsoredFixture();
+    const prepared = await prepare(context, { sponsored: true, feeToken: undefined });
+    const unsigned = Transaction.deserialize(prepared.unsigned_transaction as `0x76${string}`);
+    const changed = await Transaction.serialize({ ...unsigned, gas: 200_000n });
+    const customerSigned = await signedBytes(changed);
+    const signing = spyOn(sponsor, "sign");
+    try {
+      await expect(sponsorTempoTransaction(prepared, customerSigned, sponsor)).rejects.toThrow("Could not verify");
+      expect(signing).not.toHaveBeenCalled();
+    } finally {
+      signing.mockRestore();
+    }
+  });
+
+  test("requires both signatures and rejects forged sponsor metadata or a supplied sponsor signature", async () => {
+    const context = sponsoredFixture();
+    const signed = await signSponsored(context);
+    const customerOnly = await signedBytes(signed.prepared.unsigned_transaction);
+    await expect(validateSignature(signed.prepared, customerOnly)).rejects.toThrow("does not match");
+    await expect(validateSignature({ ...signed.prepared, sponsor_address: destination }, signed.signed_transaction)).rejects.toThrow("does not match");
+    await expect(sponsorTempoTransaction(signed.prepared, signed.signed_transaction, sponsor)).rejects.toThrow("Could not verify");
+    const transaction = Transaction.deserialize(signed.signed_transaction as `0x76${string}`);
+    const changedFeeToken = await Transaction.serialize({ ...transaction, feeToken });
+    await expect(validateSignature(signed.prepared, changedFeeToken)).rejects.toThrow("does not match");
+  });
+
+  test("lets the node reject an unfunded sponsor and keeps the original hash without fallback or resubmission", async () => {
+    const context = sponsoredFixture();
+    context.providers.sponsorStartingBalance = 0n;
+    const signed = await signSponsored(context);
+    context.providers.insufficientSponsorFunds = true;
+    const options = { network: "moderato", file: context.signedFile, record: context.recordFile };
+    await expect(broadcastTempoTransfer(context.runtime, options, context.dependencies)).rejects.toThrow("insufficient funds");
+    expect(context.runtime.output.results.at(-1)).toMatchObject({ status: "submission_unconfirmed", transaction_hash: signed.transaction_hash });
+    await broadcastTempoTransfer(context.runtime, options, context.dependencies);
+    expect(context.runtime.output.results.at(-1)?.status).toBe("not_mined_or_not_found");
+    expect(context.providers.calls.filter((call) => call.method === "eth_sendRawTransaction")).toHaveLength(1);
+    expect(context.providers.turnkeyCalls).toHaveLength(1);
+  });
+
+  test("resumes a pending Turnkey activity before adding the sponsor signature", async () => {
+    const context = sponsoredFixture();
+    const prepared = await prepare(context, { sponsored: true, feeToken: undefined });
+    context.providers.activityStatus = "ACTIVITY_STATUS_CONSENSUS_NEEDED";
+    const options = { network: "moderato", file: context.preparedFile, out: context.signedFile, turnkeyType: "TRANSACTION_TYPE_TEMPO" };
+    await signTempoTransfer(context.runtime, options, context.dependencies);
+    expect(() => readArtifact(context.signedFile, signedSchema)).toThrow("Could not read");
+    context.providers.activityStatus = "ACTIVITY_STATUS_COMPLETED";
+    context.providers.preparedForActivity = prepared;
+    await signTempoTransfer(context.runtime, { ...options, activityId }, context.dependencies);
+    const signed = readArtifact(context.signedFile, signedSchema);
+    expect(await validateSignature(prepared, signed.signed_transaction)).toBe(signed.transaction_hash);
+    expect(context.providers.turnkeyCalls.map((call) => call.path)).toEqual(["/public/v1/submit/sign_transaction", "/public/v1/query/get_activity"]);
+  });
+
+  test("reports inconsistent sponsor fee evidence as a verification failure", async () => {
+    const context = sponsoredFixture();
+    const signed = await signSponsored(context);
+    await broadcastTempoTransfer(context.runtime, { network: "moderato", file: context.signedFile, record: context.recordFile }, context.dependencies);
+    const invalidReceipts = [
+      { feePayer: account.address },
+      { feeToken },
+      { logs: [transferLog(alphaUsd, account.address, destination, 1_000_000n, 1)] },
+      { logs: [transferLog(alphaUsd, sponsor.address, feeManagerAddress, 10n, 0), transferLog(alphaUsd, feeManagerAddress, sponsor.address, 50n, 2)] },
+    ];
+    for (const invalid of invalidReceipts) {
+      context.providers.mine(signed.transaction_hash);
+      context.providers.receipt = { ...context.providers.receipt, ...invalid };
+      await expect(readTempoReceipt(context.runtime, { network: "moderato", record: context.recordFile }, context.dependencies)).rejects.toThrow("intended sponsor and fee");
+      expect(context.runtime.output.results.at(-1)?.sponsorship_verified).toBe(false);
+    }
+  });
+
+  test("reports the sponsor fee even when the transaction reverts", async () => {
+    const context = sponsoredFixture();
+    const signed = await signSponsored(context);
+    await broadcastTempoTransfer(context.runtime, { network: "moderato", file: context.signedFile, record: context.recordFile }, context.dependencies);
+    context.providers.mine(signed.transaction_hash, "0x0");
+    await expect(readTempoReceipt(context.runtime, { network: "moderato", record: context.recordFile }, context.dependencies)).rejects.toThrow("reverted");
+    expect(context.runtime.output.results.at(-1)).toMatchObject({
+      status: "reverted", intended_transfer_verified: false, sponsorship_verified: true,
+      fee_evidence: { sponsor_fee: { net_fee_units: "100" } },
+    });
+  });
+});
+
 describe("Tempo sanitized output", () => {
   test("redacts stamps, private keys, and signed bytes in human, JSON, and verbose output", () => {
     const stdout = spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      const value = { "X-Stamp": "stamp-secret", TEMPO_TURNKEY_PRIVATE_KEY: "private-secret", signedTransaction: "signed-secret", signed_transaction: "signed-secret", unsignedTransaction: "unsigned-secret", token_address: alphaUsd };
+      const value = { "X-Stamp": "stamp-secret", TEMPO_TURNKEY_PRIVATE_KEY: "private-secret", TEMPO_SPONSOR_PRIVATE_KEY: "sponsor-private-secret", signedTransaction: "signed-secret", signed_transaction: "signed-secret", unsignedTransaction: "unsigned-secret", token_address: alphaUsd };
       for (const format of ["human", "json"] as const) {
         const output = new Output(format, true);
         output.result(value);
         output.exchange("tempo", value, value);
       }
       const rendered = [...stdout.mock.calls, ...stderr.mock.calls].flat().join("");
-      for (const secret of ["stamp-secret", "private-secret", "signed-secret", "unsigned-secret"]) expect(rendered).not.toContain(secret);
+      for (const secret of ["stamp-secret", "private-secret", "sponsor-private-secret", "signed-secret", "unsigned-secret"]) expect(rendered).not.toContain(secret);
       expect(rendered).toContain(alphaUsd);
     } finally {
       stdout.mockRestore();

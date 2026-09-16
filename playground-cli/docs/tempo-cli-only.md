@@ -44,12 +44,15 @@ TEMPO_MODERATO_RPC_URL=
 TEMPO_TURNKEY_PUBLIC_KEY=
 TEMPO_TURNKEY_PRIVATE_KEY=
 TEMPO_TURNKEY_ORGANIZATION_ID=
+TEMPO_SPONSOR_PRIVATE_KEY=
 ```
 
 Empty RPC settings use the public Tempo endpoints. RPC URLs are never printed,
 including in verbose errors. Reading and preparing need no Turnkey credentials.
 Signing uses the dedicated `TEMPO_TURNKEY_*` settings and the prepared source
 address as `signWith`. It does not fall back to the existing Tesser signing keys.
+Sponsored preparation and signing also require `TEMPO_SPONSOR_PRIVATE_KEY`, a
+`0x`-prefixed 32-byte EVM private key. Only its public address is saved in artifacts.
 
 ## Commands
 
@@ -57,8 +60,8 @@ address as `signWith`. It does not fall back to the existing Tesser signing keys
 | --- | --- |
 | `inspect` | Reads the chain ID and configured token metadata. |
 | `balances --address <address>` | Reads both mapped token balances at one block. |
-| `prepare` | Reads metadata, nonce, and gas estimates; saves an unsigned transfer. |
-| `sign` | Requests a Turnkey signature; saves and validates the signed transaction. |
+| `prepare` | Reads metadata and the customer nonce; saves an unsigned transfer. `--sponsored` selects AlphaUSD sponsorship and defaults to 1,000,000 gas. |
+| `sign` | Requests a Turnkey signature, adds the sponsor signature when selected, and saves the verified signed transaction. |
 | `broadcast` | Saves a balance baseline and hash, then submits the signed transaction once. |
 | `receipt --hash <hash>` | Reads receipt, token movements, fee evidence, and historical balances. |
 | `receipt --record <path>` | Also compares the receipt with the intended transfer and saved baseline. |
@@ -124,20 +127,87 @@ Sign and broadcast are separate commands:
 
 The Turnkey type is an explicit input: `TRANSACTION_TYPE_TEMPO` or
 `TRANSACTION_TYPE_ETHEREUM`. This permits comparing the provider's behavior with
-each serialization. These experiments support ordinary secp256k1 EVM accounts;
-sponsored transactions, access keys, and multisig are outside this phase.
+each serialization. Sponsored transfers require `TRANSACTION_TYPE_TEMPO`.
+These experiments support ordinary secp256k1 EVM accounts; access keys and
+multisig are outside this flow.
 
 The CLI validates the unsigned transaction against its recorded fields and
 checks the returned signature, sender, exact bytes, and hash. A changed recipient,
 amount, token, fee, chain, or transaction format prevents broadcasting.
 For native Tempo secp256k1 signatures, it accepts the equivalent recovery-byte
-encodings `0/1` and `27/28`. It preserves the returned signed bytes and computes
-the transaction hash using Tempo's canonical `27/28` encoding. Every other byte
-must match the serialized transaction, and the signature must recover the source.
+encodings `0/1` and `27/28`. Sender-paid transfers preserve the returned signed
+bytes and compute the transaction hash using Tempo's canonical `27/28` encoding.
+Sponsored transfers normalize the customer signature before adding the sponsor
+signature, then save and broadcast the same final bytes. Every other byte must
+match the serialized transaction, and the signature must recover the source.
 
 Files are created with mode `0600` and never overwritten. Signed bytes and stamps
 are omitted from terminal output, including verbose mode. The ignored
 `tempo-artifacts/` directory keeps local evidence out of version control.
+
+## Sponsored Moderato transfers
+
+1. Fill `TEMPO_SPONSOR_PRIVATE_KEY` in the selected environment file. Preparation
+   derives its public address and builds a native Tempo transfer with sponsorship
+   enabled, a blank sender fee-token field, and the ordinary customer nonce.
+   - A missing or invalid key stops preparation with a configuration error that
+     omits the key. Sponsorship supports Moderato USDC (AlphaUSD), with AlphaUSD
+     also paying the fee. The sponsor must differ from the customer wallet.
+   - The default gas limit is `1000000` to allow for Tempo's first-use account
+     and token storage costs; `--gas-limit` overrides it. Sponsorship
+     does not simulate the transfer or check sponsor funds before signing.
+
+2. Run `sign` with the prepared file. Turnkey signs the customer payload, then
+   the CLI verifies the approved fields and customer signature, sets AlphaUSD
+   as the fee token, and signs locally with the sponsor. It verifies both
+   signatures before saving the final transaction bytes and hash.
+   - A changed sponsor key or altered customer transaction stops signing.
+     Neither signing operation broadcasts the transfer.
+   - A pending Turnkey activity uses the existing `--activity-id` resume flow.
+     Sponsorship happens only after Turnkey returns a completed signature.
+
+3. Run `broadcast`, then `receipt --record`. The broadcast record captures
+   customer, recipient, and sponsor balances before submission. Receipt output
+   verifies the intended payer and AlphaUSD fee token and reports the sponsor's
+   debit minus refund as `fee_evidence.sponsor_fee.net_fee`.
+   - An unfunded sponsor reaches the node and is rejected there. The CLI does
+     not switch to sender-paid fees or submit another transaction. Reusing a
+     broadcast record observes the existing hash without submitting again.
+   - A revert still reports any verified sponsor fee and returns a nonzero
+     exit code. Missing or inconsistent fee evidence reports
+     `sponsorship_verified: false` and also returns a nonzero exit code.
+   - Balance differences include other transactions between the snapshot
+     blocks. Isolate these test wallets when checking that the customer spent
+     only the transfer amount and the sponsor spent only the fee.
+
+With a funded sponsor and selected disposable source and recipient:
+
+```bash
+./cli --env-file config.tempo-test.env --non-interactive provider-experiments tempo --network moderato prepare \
+  --from "$TEMPO_TEST_SOURCE" \
+  --to "$TEMPO_TEST_DESTINATION" \
+  --currency USDC --amount 1 --format tempo --sponsored \
+  --out tempo-artifacts/sponsored-prepared.json
+
+./cli --env-file config.tempo-test.env --non-interactive provider-experiments tempo --network moderato sign \
+  --file tempo-artifacts/sponsored-prepared.json \
+  --turnkey-type TRANSACTION_TYPE_TEMPO \
+  --out tempo-artifacts/sponsored-signed.json
+
+./cli --env-file config.tempo-test.env --non-interactive provider-experiments tempo --network moderato broadcast \
+  --file tempo-artifacts/sponsored-signed.json \
+  --record tempo-artifacts/sponsored-broadcast.json
+
+./cli --env-file config.tempo-test.env --non-interactive --output json provider-experiments tempo --network moderato receipt \
+  --record tempo-artifacts/sponsored-broadcast.json
+```
+
+For the successful experiment, give the customer exactly the transfer amount in
+AlphaUSD and fund the separate sponsor with AlphaUSD for fees. Verify the
+customer decreases by the transfer amount, the recipient increases by that
+amount, and the sponsor decreases by the verified net fee. This exercises the
+Turnkey and Tempo mechanism directly; Tesser API accounting and SDK acceptance
+remain separate work.
 
 ## Resume and evidence
 
@@ -172,9 +242,23 @@ These observations do not establish backend accounting or a finality policy.
 
 Run `bun run check` for typechecking and the CLI test suite. The Tempo tests use
 local fixture keys and mocked RPC/Turnkey responses. Public chain and token reads
-can verify configuration without selecting any test accounts. Actual Turnkey
-acceptance, broadcasts, address reuse, and fee behavior still require the separate
-Moderato verification after account selection.
+can verify configuration without selecting any test accounts. A live test also
+verifies Turnkey acceptance, broadcast, and fee behavior for its selected accounts.
+
+On September 16, 2026, a sponsored 3 AlphaUSD transfer passed on Moderato (42431):
+[transaction 0x43b5e9943393224d9d1fa074f46e587247d70dd4a0eed144c094c1d49e765861](https://explore.testnet.tempo.xyz/tx/0x43b5e9943393224d9d1fa074f46e587247d70dd4a0eed144c094c1d49e765861).
+The sender `0xa453549C4d75A68f53d2483002884E9b2e63D9B4` spent its exact 3 AlphaUSD
+balance and ended at zero. Recipient `0x2b89795A07128Ac2055D21A3a4351C71EeE5849c`
+gained 3 AlphaUSD. Sponsor `0x11f54044793bb09341ca8a314ABE6e38E807D05f` paid
+0.000507 AlphaUSD, verified against its balance change and the receipt fee events.
+The transaction used 290,842 gas. The platform sponsor helper reproduced the same
+signed bytes from the completed Turnkey activity.
+
+The first attempt exposed an insufficient 100,000 gas default for a first-use
+Tempo wallet. The node rejected it without advancing the sender nonce. The
+corrected default is 1,000,000 gas; the transfer succeeded with fresh signatures.
+The CLI passed type checking and all 124 tests after this correction. This direct
+test leaves Tesser API accounting, both SDKs and mainnet acceptance pending.
 
 On September 7, 2026, the implemented `inspect` command passed against the public
 mainnet RPC at block `38454538` and Moderato RPC at block `34294907`, returning the

@@ -42,6 +42,7 @@ Each operation validates its local prerequisites before prompting or making an A
 - Admin invitations: `TESSER_BASE_URL` and `ADMIN_API_SECRET`
 - Direct Kraken operations: `KRAKEN_API_KEY` and `KRAKEN_API_SECRET`
 - Tempo signing: `TEMPO_TURNKEY_PUBLIC_KEY`, `TEMPO_TURNKEY_PRIVATE_KEY`, and `TEMPO_TURNKEY_ORGANIZATION_ID`
+- Tempo sponsorship: `TEMPO_SPONSOR_PRIVATE_KEY` for sponsored Moderato AlphaUSD transfers; see [the sponsorship flow](docs/tempo-cli-only.md#sponsored-moderato-transfers).
 
 The CLI exits after a successful, cancelled, or failed operation. `Back` only navigates to the parent menu.
 
