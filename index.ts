@@ -257,7 +257,8 @@ async function step4_createDeposit(
           },
         },
       }),
-    retryOpts("Deposit"),
+    // treasury-3103: the ledger's Circle compliance is still PENDING
+    retryOpts("Deposit", { retryOn: ["treasury-3103"] }),
   );
 
   return deposit.data.id;
@@ -273,7 +274,8 @@ async function step5_simulateDeposit(depositId: string): Promise<void> {
         `/v1/treasury/deposits/${depositId}/simulate`,
         {},
       ),
-    retryOpts("Simulate"),
+    // treasury-3101: the deposit's steps aren't planned yet
+    retryOpts("Simulate", { retryOn: ["treasury-3101"] }),
   );
   console.log("  Simulate response:", JSON.stringify(res.data, null, 2));
 }
@@ -351,7 +353,8 @@ async function step6_createPayment(
           },
         },
       }),
-    retryOpts("Payment"),
+    // payments-3017: the beneficiary's Circle recipient isn't active yet
+    retryOpts("Payment", { retryOn: ["payments-3017"] }),
   );
   return payment.data.id;
 }

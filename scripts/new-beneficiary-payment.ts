@@ -86,7 +86,8 @@ async function main() {
         to_currency: "USDC",
         to_network: "STELLAR",
       }),
-    retryOpts("Payment"),
+    // payments-3017: the new wallet's Circle recipient isn't active yet
+    retryOpts("Payment", { retryOn: ["payments-3017"] }),
   );
 
   const paymentId = payment.data.id;
