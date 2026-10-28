@@ -2,7 +2,8 @@ import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { ApiError, authenticate, get, getAll, post, DEBUG } from "./src/client.ts";
 import { poll, postWithRetry } from "./src/retry.ts";
-import type { Account, Deposit, Envelope, Leg, Payment, Step } from "./src/types.ts";
+import { assertNoFailedStep, stepSummary, waitForPayment } from "./src/steps.ts";
+import type { Account, Deposit, Envelope, Leg, Payment } from "./src/types.ts";
 import type {
   CounterpartyListResponse,
   TenantListResponse,
@@ -59,19 +60,7 @@ function payoutConfig(): Payout {
 const formatLeg = (leg: Leg) =>
   [leg.amount, leg.currency, leg.network && pc.dim(leg.network)].filter(Boolean).join(" ");
 
-const stepSummary = (steps: Step[]) =>
-  steps.map((s) => `step${s.step_sequence}=${s.status}`).join(", ") || "no steps yet";
-
 const toCents = (amount: string) => Math.round(parseFloat(amount) * 100);
-
-function assertNoFailedStep(kind: string, steps: Step[]): void {
-  const failed = steps.find((s) => s.status === "failed");
-  if (!failed) return;
-  const reasons = failed.status_reasons
-    ?.map((r) => `${r.error_code}: ${r.error_message}`)
-    .join("; ");
-  throw new Error(`${kind} step ${failed.step_sequence} failed: ${reasons || "no reason given"}`);
-}
 
 // ---------------------------------------------------------------------------
 // Step 1: Authenticate
@@ -492,40 +481,13 @@ async function step6_createPayment(
 // ---------------------------------------------------------------------------
 // Step 7: Wait for the payment to complete
 // ---------------------------------------------------------------------------
-// Approves a payment held for risk review once, and fails fast on a risk
-// rejection or a failed step. Done when every step is completed.
+// The E2E approves a payment held for risk review; a rejection or a failed
+// step fails the run. Done when every step is completed.
 async function step7_waitForPayment(paymentId: string): Promise<Payment> {
-  const reviewKey = crypto.randomUUID();
-  let reviewed = false;
-  let last = "";
-  return poll(
-    "Payment",
-    async () => {
-      const { data: payment } = await get<Envelope<Payment>>(`/v1/payments/${paymentId}`);
-      const summary = `risk=${payment.risk_status ?? "-"}  balance=${payment.balance_status ?? "-"}  ${stepSummary(payment.steps)}`;
-      if (summary !== last) console.log(pc.yellow(`  ${summary}`));
-      last = summary;
-
-      if (payment.risk_status === "automatically_rejected" || payment.risk_status === "manually_rejected") {
-        throw new Error(`Payment ${paymentId} was rejected by risk screening (${payment.risk_status})`);
-      }
-      if (payment.risk_status === "awaiting_decision" && !reviewed) {
-        await post(
-          `/v1/payments/${paymentId}/review`,
-          { is_approved: true, reason: "Approved by the api-demo E2E run" },
-          { idempotencyKey: reviewKey },
-        );
-        reviewed = true;
-        console.log(pc.dim("  Risk review: approved"));
-        return undefined;
-      }
-
-      assertNoFailedStep("Payment", payment.steps);
-      const done = payment.steps.length > 0 && payment.steps.every((s) => s.status === "completed");
-      return done ? payment : undefined;
-    },
-    { timeoutMs: 10 * 60_000 },
-  );
+  return waitForPayment(paymentId, {
+    decide: async () => true,
+    reason: "Approved by the api-demo E2E run",
+  });
 }
 
 // ---------------------------------------------------------------------------
