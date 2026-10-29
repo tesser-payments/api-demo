@@ -1,6 +1,7 @@
 import pc from "picocolors";
-import { authenticate, get, post } from "../src/client.ts";
-import { pRetry, AbortError, retryOpts } from "../src/retry.ts";
+import { authenticate, post } from "../src/client.ts";
+import { waitForPayment } from "../src/steps.ts";
+import type { Envelope, Payment } from "../src/types.ts";
 
 // ---------------------------------------------------------------------------
 // Read payment request body from stdin (JS object literal)
@@ -9,59 +10,6 @@ async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf-8").trim();
-}
-
-// ---------------------------------------------------------------------------
-// Poll payment until every step reaches a terminal success state
-// ---------------------------------------------------------------------------
-async function pollPayment(paymentId: string): Promise<void> {
-  await pRetry(
-    async () => {
-      const payment = await get<{
-        data: {
-          steps?: {
-            step_sequence: number;
-            status: string;
-            status_reasons?: string | null;
-            finalized_at?: string | null;
-            completed_at?: string | null;
-          }[];
-        };
-      }>(`/v1/payments/${paymentId}`);
-      const steps = payment.data.steps ?? [];
-
-      const failedStep = steps.find((s) => s.status === "failed");
-      if (failedStep) {
-        throw new AbortError(
-          `Step ${failedStep.step_sequence} failed: ${failedStep.status_reasons}`,
-        );
-      }
-
-      const stepStatuses = steps
-        .map((s) => `step${s.step_sequence}=${s.status}`)
-        .join(", ");
-      console.log(pc.yellow(`  Poll: ${stepStatuses}`));
-
-      const allTerminal =
-        steps.length >= 1 && steps.every((s) => s.completed_at ?? s.finalized_at);
-      if (allTerminal) {
-        const latest = steps.reduce((a, b) => {
-          const aAt = (a.completed_at ?? a.finalized_at) as string;
-          const bAt = (b.completed_at ?? b.finalized_at) as string;
-          return bAt > aAt ? b : a;
-        });
-        const terminalAt = (latest.completed_at ?? latest.finalized_at) as string;
-        const label = latest.completed_at ? "completed" : "finalized";
-        console.log(
-          pc.green(`  All ${steps.length} step(s) terminal — latest ${label} at ${terminalAt}`),
-        );
-        return;
-      }
-
-      throw new Error("Payment not yet finalized");
-    },
-    retryOpts("Poll"),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -81,12 +29,17 @@ async function main() {
   await authenticate();
 
   console.log(pc.bold("\n[2] Creating payment..."));
-  const payment = await post<{ data: { id: string } }>("/v1/payments", body);
+  const payment = await post<Envelope<Payment>>("/v1/payments", body);
   const paymentId = payment.data.id;
   console.log(`  Payment ID: ${pc.cyan(paymentId)}`);
 
-  console.log(pc.bold("\n[3] Polling payment until complete..."));
-  await pollPayment(paymentId);
+  // A payment held for risk review waits here until someone decides
+  // (dashboard or POST /v1/payments/{id}/review).
+  console.log(pc.bold("\n[3] Waiting for the payment to complete..."));
+  const completed = await waitForPayment(paymentId);
+  for (const s of completed.steps) {
+    console.log(pc.green(`  step${s.step_sequence} completed at ${s.completed_at}  ${pc.dim(s.transaction_hash ?? "")}`));
+  }
 
   console.log(pc.bold(pc.green("\nDone!")));
 }

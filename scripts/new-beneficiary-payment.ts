@@ -1,28 +1,30 @@
 import pc from "picocolors";
 import { faker } from "@faker-js/faker";
 import { createInterface } from "node:readline";
-import { authenticate, get, post } from "../src/client.ts";
-import { pRetry, AbortError, retryOpts } from "../src/retry.ts";
+import { authenticate, post } from "../src/client.ts";
+import { postWithRetry } from "../src/retry.ts";
+import { waitForPayment } from "../src/steps.ts";
+import type { Envelope, Payment } from "../src/types.ts";
 
 const FROM_ACCOUNT_ID = process.env.TESSER_FROM_ACCOUNT_ID;
 if (!FROM_ACCOUNT_ID) throw new Error("TESSER_FROM_ACCOUNT_ID is not set");
 
-function promptYesNo(question: string): Promise<boolean> {
+const NETWORK = (process.env.PAYMENT_NETWORK || "STELLAR").toUpperCase();
+const WALLET_TYPE = NETWORK.startsWith("STELLAR") ? "stablecoin_stellar" : "stablecoin_ethereum";
+
+function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) =>
     rl.question(question, (answer) => {
       rl.close();
-      resolve(answer.trim().toLowerCase().startsWith("y"));
+      resolve(answer.trim());
     }),
   );
 }
 
 async function main() {
   // 1. Prompt for wallet address
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const address = await new Promise<string>((resolve) =>
-    rl.question("Wallet address: ", (answer) => { rl.close(); resolve(answer.trim()); }),
-  );
+  const address = await prompt(`${NETWORK} wallet address: `);
   if (!address) throw new Error("No wallet address provided");
 
   console.log(pc.bold("\n[1] Authenticating..."));
@@ -50,12 +52,12 @@ async function main() {
   const counterpartyId = counterparty.data.id;
   console.log(`  Counterparty: ${beneficiaryName} ${pc.dim(`(${counterpartyId})`)}`);
 
-  // 3. Create unmanaged Stellar wallet
+  // 3. Create unmanaged wallet. A Stellar address needs a USDC trustline.
   console.log(pc.bold("\n[3] Creating wallet..."));
   const walletName = `${beneficiaryName}'s Wallet`;
   const wallet = await post<{ data: { id: string } }>("/v1/accounts/wallets", {
     name: walletName,
-    type: "stablecoin_stellar",
+    type: WALLET_TYPE,
     is_managed: false,
     wallet_address: address,
     counterparty_id: counterpartyId,
@@ -67,93 +69,46 @@ async function main() {
   console.log(pc.bold("\n[4] Creating payment..."));
   const amount = (1 + Math.random()).toFixed(2);
 
-  const payment = await pRetry(
-    () =>
-      post<{
-        data: {
-          id: string;
-          risk_status: string;
-          balance_status: string;
-          expires_at: string;
-        };
-      }>("/v1/payments", {
-        direction: "outbound",
-        funding_account_id: FROM_ACCOUNT_ID,
-        from_account_id: FROM_ACCOUNT_ID,
-        to_account_id: walletAccountId,
-        from_amount: amount,
-        from_currency: "USDC",
-        to_currency: "USDC",
-        to_network: "STELLAR",
-      }),
-    retryOpts("Payment"),
+  const payment = await postWithRetry<Envelope<Payment>>(
+    "Payment",
+    "/v1/payments",
+    {
+      funding_account_id: FROM_ACCOUNT_ID,
+      desired: {
+        from: {
+          account_id: FROM_ACCOUNT_ID,
+          amount,
+          currency: "USDC",
+          network: NETWORK,
+        },
+        to: {
+          account_id: walletAccountId,
+          currency: "USDC",
+          network: NETWORK,
+        },
+      },
+    },
+    // payments-3017: the new wallet's Circle recipient isn't active yet
+    { retryOn: ["payments-3017"] },
   );
 
   const paymentId = payment.data.id;
-  console.log(`  Amount:         ${pc.cyan(amount)} USDC`);
+  console.log(`  Amount:         ${pc.cyan(amount)} USDC on ${NETWORK}`);
   console.log(`  Payment ID:     ${pc.cyan(paymentId)}`);
   console.log(`  Risk status:    ${payment.data.risk_status}`);
   console.log(`  Balance status: ${payment.data.balance_status}`);
-  console.log(`  Expires at:     ${pc.dim(payment.data.expires_at)}`);
+  console.log(`  Expires at:     ${pc.dim(payment.data.expires_at ?? "-")}`);
 
-  // 5. Poll payment until finalized/completed
-  console.log(pc.bold("\n[5] Polling payment until finalized..."));
-  await pRetry(
-    async () => {
-      const res = await get<{
-        data: {
-          risk_status?: string;
-          steps?: {
-            step_sequence: number;
-            status: string;
-            status_reasons?: string | null;
-            finalized_at?: string | null;
-            completed_at?: string | null;
-          }[];
-          [key: string]: unknown;
-        };
-      }>(`/v1/payments/${paymentId}`);
-
-      console.log(JSON.stringify(res, null, 2));
-
-      // Handle risk review if awaiting decision
-      if (res.data.risk_status === "awaiting_approval") {
-        const approved = await promptYesNo(
-          pc.yellow("\n  Risk status is awaiting_approval. Approve? (y/n): "),
-        );
-        const review = await post<{ data: Record<string, unknown> }>(
-          `/v1/payments/${paymentId}/review`,
-          { is_approved: approved },
-        );
-        console.log(`  Review submitted (${approved ? "approved" : "rejected"}):`);
-        console.log(JSON.stringify(review, null, 2));
-        if (!approved) {
-          throw new AbortError("Payment rejected by user");
-        }
-        throw new Error("Waiting for post-review processing");
-      }
-
-      const steps = res.data.steps ?? [];
-
-      const failedStep = steps.find((s) => s.status === "failed");
-      if (failedStep) {
-        throw new AbortError(
-          `Step ${failedStep.step_sequence} failed: ${failedStep.status_reasons}`,
-        );
-      }
-
-      const first = steps[0];
-      const terminalAt = first?.completed_at ?? first?.finalized_at;
-      if (steps.length >= 1 && terminalAt) {
-        const label = first?.completed_at ? "Completed" : "Finalized";
-        console.log(pc.green(`  ${label} at ${terminalAt}`));
-        return;
-      }
-
-      throw new Error("Payment not yet finalized");
-    },
-    retryOpts("Poll"),
-  );
+  // 5. Wait until every step is completed, asking before approving a risk review
+  console.log(pc.bold("\n[5] Waiting for the payment to complete..."));
+  const completed = await waitForPayment(paymentId, {
+    decide: async () =>
+      (await prompt(pc.yellow("\n  Risk status is awaiting_decision. Approve? (y/n): ")))
+        .toLowerCase()
+        .startsWith("y"),
+    reason: "Reviewed with scripts/new-beneficiary-payment.ts",
+  });
+  console.log(JSON.stringify(completed, null, 2));
 
   console.log(pc.bold(pc.green("\nDone!")));
 }

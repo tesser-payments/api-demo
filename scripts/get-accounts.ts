@@ -1,14 +1,6 @@
 import pc from "picocolors";
 import { authenticate, get } from "../src/client.ts";
-
-type Account = {
-  id: string;
-  name: string;
-  workspace_id: string;
-  entity_id: string;
-  type: string;
-  is_managed: boolean;
-};
+import type { Account } from "../src/types.ts";
 
 type PageResponse = {
   data: Account[];
@@ -37,8 +29,8 @@ async function main() {
 
   for (const a of accounts) {
     console.log(`  ${pc.cyan(a.id)}  ${a.name}`);
-    console.log(`    workspace: ${a.workspace_id}  entity: ${a.entity_id}`);
-    console.log(`    type: ${a.type}  managed: ${a.is_managed}`);
+    console.log(`    workspace: ${a.workspace_id}  counterparty: ${a.counterparty_id ?? "-"}  tenant: ${a.tenant_id ?? "-"}`);
+    console.log(`    type: ${a.type}  managed: ${!!a.is_managed}`);
   }
 
   console.log(pc.bold(pc.green("\nDone!")));

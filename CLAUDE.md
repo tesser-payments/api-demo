@@ -91,14 +91,15 @@ All paths relative to base URL.
 | POST | `/v1/payments` | Create payment |
 | GET | `/v1/payments/{paymentId}` | Get payment |
 | PATCH | `/v1/payments/{paymentId}` | Update payment account assignments |
-| POST | `/v1/payments/{paymentId}/review` | Submit risk review decision (`{ is_approved: boolean }`) |
+| POST | `/v1/payments/{paymentId}/review` | Submit risk review decision (`{ is_approved: boolean, reason?: string }`) |
 
 ### Treasury
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/v1/treasury/deposits` | Create deposit |
+| POST | `/v1/treasury/deposits` | Create deposit (`{ organization_reference_id?, desired: { from, to } }`) |
 | GET | `/v1/treasury/deposits/{id}` | Get deposit |
+| POST | `/v1/treasury/deposits/{id}/simulate` | Sandbox only: fund a planned deposit with a Circle mock wire |
 | POST | `/v1/treasury/withdrawals` | Create withdrawal |
 | GET | `/v1/treasury/withdrawals/{id}` | Get withdrawal |
 
@@ -132,7 +133,7 @@ All paths relative to base URL.
 `inbound` · `outbound` · `internal`
 
 ### Risk Status
-`unchecked` → `awaiting_decision` → `auto_approved` | `manually_approved` | `auto_rejected` | `manually_rejected`
+`unchecked` → `automatically_approved` | `automatically_rejected` | `awaiting_decision` → `manually_approved` | `manually_rejected`
 
 ### Balance Status
 `unreserved` → `awaiting_funds` → `reserved`
@@ -141,16 +142,19 @@ All paths relative to base URL.
 `transfer` · `swap`
 
 ### Step Status
-`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `finalized` → `completed` | `failed`
+`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `completed` | `failed`
 - `signature_requested` / `signed` only fire for self-custodial steps that need a local signature
-- `finalized` = block finality (terminal for crypto-only steps)
-- `completed` = funds delivered (terminal when there's a fiat-conversion leg)
+- `completed` and `failed` are the only terminal statuses; there is no `finalized` status or `finalized_at` field
 
 ### Provider Key
 `alfred` · `circle_mint`
 
 ### Supported Networks
 `ETHEREUM` · `POLYGON` · `STELLAR` · `SOLANA`
+
+**Sandbox:** `/v1/networks` lists `BASE_SEPOLIA` · `ETHEREUM_SEPOLIA` · `POLYGON_AMOY` · `STELLAR_TESTNET` · `TEMPO_MODERATO`, but payments take `STELLAR` (not `STELLAR_TESTNET`) and `ETHEREUM_SEPOLIA`; both are verified end-to-end. The E2E pays out on `PAYMENT_NETWORK` (default `STELLAR`).
+
+Sandbox EVM risk-test addresses: `0xd3f72b3e91c8124dfc1b4273e93594bb00c9be6f` → `automatically_approved` · `0x0a5b2bf3ccfb44c1d22f07eed9553ecba752d4ad` → `awaiting_decision` · `0xac4cc4b68ea24bbfaac8fd127b67ed445accce22` → `automatically_rejected`
 
 ### Bank Code Types
 `SWIFT` · `BIC` · `IBAN` · `ROUTING` · `SORT_CODE`
@@ -177,11 +181,19 @@ All paths relative to base URL.
    - **Fiat conversion** — stablecoin to fiat off-ramp
 
 ### Step Status Progression
-`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `finalized`/`completed` (or `failed`)
+`created` → `signature_requested` → `signed` → `submitted` → `confirmed` → `completed` (or `failed`)
 - `signature_requested` / `signed` only fire for self-custodial steps that need a local signature
-- `finalized` = block finality (crypto-only steps stop here; `finalized_at` is set, `completed_at` stays null)
-- `completed` = funds delivered (fires when there's a fiat-conversion leg; `completed_at` is set)
-- When polling, treat either `finalized_at` or `completed_at` being non-null as terminal success
+- When polling, a payment succeeded when **every** step is `completed`. Fail on any `failed` step (its `status_reasons` is `[{ error_code, error_message }]`) or a `*_rejected` risk status
+- `awaiting_decision` waits for `POST /v1/payments/{id}/review` until the payment expires
+
+### Deposit Flow (Circle Mint)
+USD wire from a `fiat_bank` account → Circle → USDC minted into a `CIRCLE_MINT` ledger. All of it is asynchronous:
+1. **Ledger compliance**: a new ledger can't take deposits (`treasury-3103`) until Circle accepts it. Filter `GET /v1/accounts?type=ledger&compliance_accepted=true` to wait. Usually about 10 s; the platform rechecks every 30 min after its first few checks
+2. **Planning**: `POST /v1/treasury/deposits` returns with `steps: []`; planning fills them in a few seconds later. Simulating before that fails with `treasury-3101`. If the Circle account has no linked wire bank, the deposit is never planned and the API gives no reason
+3. **Simulate** (sandbox): `POST /v1/treasury/deposits/{id}/simulate` sends a Circle mock wire. Circle matches the wire to the deposit by exact amount, so concurrent deposits need distinct amounts
+4. **Settlement**: Circle confirms by webhook; the deposit is done when every step is `completed` and the ledger shows the USDC
+
+A ledger used as `funding_account_id` pays out through Circle. A payment to a new wallet fails with `payments-3017` until Circle activates the recipient (about 40 s); retry it with a fresh `Idempotency-Key`, because the platform replays a cached 4xx response for the same key
 
 ### Payment Expiration
 All payments have `expires_at`. Expired payments require creating a new payment (risk/compliance checks must be re-initiated).
@@ -219,10 +231,11 @@ function verifyWebhook(rawBody: string, signature: string): boolean {
 
 | Scope | Events |
 |-------|--------|
-| `payment.*` | `quote_created`, `steps_created`, `balance_updated`, `risk_updated` |
-| `step.*` | `signature_requested`, `signed`, `submitted`, `confirmed`, `finalized`, `completed`, `failed` |
-| `deposit.*` | `created`, `submitted`, `confirmed` |
-| `withdrawal.*` | `created`, `submitted`, `confirmed` |
+| `payment.*` | `created`, `quote_created`, `steps_created`, `balance_updated`, `risk_updated`, `updated` |
+| `step.*` | `signature_requested`, `signed`, `submitted`, `confirmed`, `completed`, `failed`, `updated` |
+| `deposit.*` | `quote_created`, `steps_created`, `updated` |
+| `withdrawal.*` | `quote_created`, `steps_created`, `balance_updated`, `updated` |
+| `rebalance.*` | `quote_created`, `balance_updated`, `updated`, `expired` |
 
 ## Sensitive Data
 
@@ -244,6 +257,16 @@ function verifyWebhook(rawBody: string, signature: string): boolean {
 | `payments-0007` | Signature is malformed or signed with incorrect key |
 | `payments-0008` | Signed transaction does not match details |
 | `payments-0009` | Legal Entity Identifier required for business originators of fiat payouts |
+
+### Codes the E2E handles
+
+| Code | Meaning | Handling |
+|------|---------|----------|
+| `treasury-3101` | The deposit has no provider step yet, e.g. simulated before planning | Wait for the deposit to have steps |
+| `treasury-3103` | Circle compliance not yet accepted for the ledger | Wait for `compliance_accepted=true` |
+| `payments-3017` | `to_account` not yet risk approved by the custodian (Circle recipient inactive) | Retry with a new `Idempotency-Key` |
+| `idempotency-0001` | A request with this `Idempotency-Key` is still processing | Retry with the same key |
+| `organizations-0009` | Circle key already configured | Continue |
 
 ### Standard HTTP
 `400` Bad Request · `401` Unauthorized · `403` Forbidden · `404` Not Found · `429` Rate Limited · `500` Internal Server Error
