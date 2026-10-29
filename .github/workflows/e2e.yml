@@ -11,15 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Unit tests
+        run: bun test
       - name: Run E2E
-        timeout-minutes: 30
+        # Covers the ledger compliance wait, which can take up to 35 min when
+        # Circle is slow to accept. A typical run takes about 3 min.
+        timeout-minutes: 50
         run: bun run index.ts
         env:
           TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.TESSER_AUTH_URL }}
+          # Unset means STELLAR
+          PAYMENT_NETWORK: ${{ vars.PAYMENT_NETWORK }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
