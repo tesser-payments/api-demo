@@ -24,6 +24,10 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 - **A Circle Mint sandbox account** with an API key (`CIRCLE_API_KEY`) and **a linked wire bank** in status `complete`.
   - The platform needs it to set up the Circle deposit instructions. Without one, the deposit is never planned and the API gives no reason.
   - The wire bank can't be created through the Tesser API. Create it in Circle sandbox with `POST /v1/businessAccount/banks/wires` (see Circle's docs). Step 1.6 checks for it.
+- **A confirmed Circle webhook subscription for your Tesser organization.** Circle uses it to tell Tesser that a wire has settled. Without it, Circle credits the ledger but the deposit never completes, and step 5b times out.
+  - Storing the Circle key (step 1.5) registers it: `https://sandbox.tesserx.co/v1/webhooks/circle/<organization id>`.
+  - To check it, call Circle's `GET /v1/notifications/subscriptions` with the same key. If it's missing, register it with `POST /v1/notifications/subscriptions`. The public API doesn't return the organization id, so get it from the Tesser team.
+  - Several organizations can share one Circle account, but each needs its own subscription.
 
 ## Quick start
 
@@ -130,7 +134,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 | Step 1.6: "Circle isn't connected to this workspace" | No Circle key stored for the workspace | Set `CIRCLE_API_KEY` |
 | Step 1.6: "has no linked wire bank" | The Circle account has no wire bank | Link one in Circle sandbox (see [Prerequisites](#prerequisites)) |
 | Step 4b times out | The deposit was never planned, usually because of the wire bank | Check the Circle wire bank status |
-| Step 5b times out | Circle never confirmed the mock wire | Check the Circle webhook subscription for this environment |
+| Step 5b times out | Circle settled the wire but never told Tesser, because the Circle account has no confirmed webhook subscription for your organization | Register one (see [Prerequisites](#prerequisites)). Deposits that already timed out stay incomplete; the next run is unaffected |
 | "BENEFICIARY_WALLET_ADDRESS isn't a Stellar address" (or "an EVM") | The address doesn't match `PAYMENT_NETWORK` | Change one of them, or clear the address |
 
 ## Development
