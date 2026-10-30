@@ -1,4 +1,4 @@
-name: E2E Tests
+name: platform-deploy
 
 on:
   repository_dispatch:
