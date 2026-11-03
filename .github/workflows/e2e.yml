@@ -4,6 +4,10 @@ on:
   repository_dispatch:
     types: [platform-deploy]
   workflow_dispatch:
+  push:
+    branches: [main]
+  # Pull requests only get the typecheck and unit tests; the live E2E is skipped.
+  pull_request:
 
 jobs:
   e2e:
@@ -17,6 +21,7 @@ jobs:
       - name: Unit tests
         run: bun test
       - name: Run E2E
+        if: github.event_name != 'pull_request'
         # Covers the ledger compliance wait, which can take up to 35 min when
         # Circle is slow to accept. A typical run takes about 3 min.
         timeout-minutes: 50
@@ -33,7 +38,7 @@ jobs:
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
       - name: Notify Slack on failure
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         uses: slackapi/slack-github-action@v2
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}

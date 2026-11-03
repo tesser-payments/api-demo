@@ -155,6 +155,8 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 
 - `repository_dispatch` (`platform-deploy`): fired by `tesser-payments/platform` after its backend deploy from `main` succeeds.
 - `workflow_dispatch`: manual trigger from the GitHub Actions tab.
+- `push` to `main`: every merge to this repo.
+- `pull_request`: typecheck and unit tests only; the live E2E and the Slack alert are skipped.
 
 The E2E runs against sandbox, which is promoted from `main` separately. A run fired by a platform merge tests the sandbox release that is live at the time, not necessarily the code that was just merged.
 

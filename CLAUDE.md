@@ -66,7 +66,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, then `index.ts` on sandbox |
+| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, then `index.ts` on sandbox (after a platform deploy, a merge to `main`, or by hand); pull requests get only the typecheck and unit tests |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
