@@ -141,6 +141,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 
 ```bash
 bun test            # unit tests for the retry and polling helpers
+bun run e2e         # E2E tests in e2e/ against sandbox, with .env.local
 bunx tsc --noEmit   # typecheck
 ```
 

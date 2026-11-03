@@ -1,0 +1,3 @@
+[test]
+# `bun test` runs the unit tests only; the E2E tests run with `bun run e2e`.
+root = "src"
