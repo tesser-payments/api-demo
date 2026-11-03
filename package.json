@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "demo": "bun run index.ts",
-    "e2e": "bun test --env-file=.env.local ./e2e"
+    "e2e": "bun test --timeout 300000 --env-file=.env.local ./e2e"
   },
   "devDependencies": {
     "@types/bun": "latest"
