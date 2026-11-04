@@ -1,6 +1,6 @@
 import { get, getAll, post } from "../client.ts";
 import type { Payout } from "../payout.ts";
-import { poll } from "../retry.ts";
+import { isTransient, poll } from "../retry.ts";
 import type { Account, Envelope } from "../types.ts";
 
 export interface FundingBank {
@@ -68,6 +68,36 @@ export async function createUnmanagedWallet({
   return wallet.data.id;
 }
 
+/** The workspace's own managed EVM wallet named exactly `name`; throws if several share it. */
+export async function findManagedEvmWallet(name: string): Promise<Account | undefined> {
+  const candidates = await getAll<Account>(
+    `/v1/accounts?type=stablecoin_ethereum&is_managed=true&search=${encodeURIComponent(name)}`,
+  );
+  const matches = candidates.filter((a) => a.name === name && !a.tenant_id && !a.counterparty_id);
+  if (matches.length > 1) {
+    throw new Error(`${matches.length} managed wallets are named "${name}"; delete the extras so exactly one remains`);
+  }
+  return matches[0];
+}
+
+/**
+ * A wallet Tesser holds keys for, on every EVM network. One attempt only: a 5xx
+ * can follow a wallet Turnkey already created, and retries would log the signature.
+ */
+export async function createManagedEvmWallet({ name, signature }: { name: string; signature: string }): Promise<Account> {
+  try {
+    const wallet = await post<Envelope<Account>>(
+      "/v1/accounts/wallets",
+      { name, type: "stablecoin_ethereum", is_managed: true, signature },
+      { idempotencyKey: crypto.randomUUID() },
+    );
+    return wallet.data;
+  } catch (err) {
+    if (err instanceof Error) err.message = err.message.replaceAll(signature, "<redacted>");
+    throw err;
+  }
+}
+
 /**
  * Wait until Circle accepts the ledger's compliance. Deposits into the ledger
  * are rejected (treasury-3103) until then. The platform checks after 10s,
@@ -95,24 +125,30 @@ export async function waitForLedgerCompliance({
   );
 }
 
-/**
- * Wait until the account's available balance in `currency` is exactly
- * `amount`. Throws as soon as it is higher.
- */
-export async function waitForBalance({
-  accountId,
-  currency,
-  amount,
-}: {
+export interface BalanceQuery {
   accountId: string;
   currency: string;
-  amount: string;
-}): Promise<string> {
+  /** A wallet holds a balance per network; leave it out for a ledger. */
+  network?: string;
+}
+
+/** The account's available balance in `currency` (and `network`), "0" if it holds none. */
+export async function getAvailableBalance({ accountId, currency, network }: BalanceQuery): Promise<string> {
+  const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
+  const asset = data.assets?.find((a) => a.currency === currency && (!network || a.network === network));
+  return asset?.available_balance ?? "0";
+}
+
+/**
+ * Wait until the account's available balance in `currency` (and `network`) is
+ * exactly `amount`. Throws as soon as it is higher.
+ */
+export async function waitForBalance({ amount, ...query }: BalanceQuery & { amount: string }): Promise<string> {
+  const { accountId, currency } = query;
   return poll(
     "Account balance",
     async () => {
-      const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
-      const available = data.assets?.find((a) => a.currency === currency)?.available_balance ?? "0";
+      const available = await getAvailableBalance(query);
       if (toCents(available) > toCents(amount)) {
         throw new Error(`Account ${accountId} holds ${available} ${currency}, more than the expected ${amount}`);
       }
@@ -120,4 +156,25 @@ export async function waitForBalance({
     },
     { timeoutMs: 60_000, intervalMs: 5_000, timeoutHint: `expected ${amount} ${currency} in account ${accountId}` },
   );
+}
+
+/** Throw unless the available balance stays exactly `amount` for `holdMs`. */
+export async function assertBalanceHolds({
+  amount,
+  holdMs,
+  ...query
+}: BalanceQuery & { amount: string; holdMs: number }): Promise<void> {
+  const deadline = Date.now() + holdMs;
+  while (true) {
+    try {
+      const available = await getAvailableBalance(query);
+      if (toCents(available) !== toCents(amount)) {
+        throw new Error(`Account ${query.accountId} holds ${available} ${query.currency}, expected it to stay at ${amount}`);
+      }
+    } catch (error) {
+      if (!isTransient(error)) throw error;
+    }
+    if (Date.now() >= deadline) return;
+    await Bun.sleep(5_000);
+  }
 }

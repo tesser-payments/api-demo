@@ -121,3 +121,13 @@ export interface Deposit {
   updated_at: string;
   expires_at?: string | null;
 }
+
+/** `POST /v1/payments/simulate-inbound` when detection or screening outlasts its wait (202). */
+export interface SimulatedInboundPending {
+  tx_hash: string;
+  network: string;
+  status: "pending";
+  payment_id: string | null;
+}
+
+export type MockedRiskStatus = "automatically_approved" | "awaiting_decision" | "automatically_rejected";
