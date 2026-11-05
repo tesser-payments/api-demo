@@ -71,8 +71,12 @@ test.each(scenarios)(
     expect(payment.direction).toBe("inbound");
     expect(payment.risk_status).toBe(finalRiskStatus);
     expect(payment.steps.map((s) => s.status)).toEqual(["completed"]);
+    const [transfer] = payment.steps;
+    expect(transfer?.transaction_hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(transfer?.completed_at).toBeTruthy();
     expect(payment.actual.to.account_id).toBe(wallet.id);
     expect(payment.actual.to.network).toBe(network);
+    expect(payment.actual.to.currency).toBe("USDC");
     expect(parseFloat(payment.actual.to.amount ?? "0")).toBe(INBOUND_AMOUNT);
     // Neither finality nor the review moves the balance again.
     await assertBalanceHolds({ ...balance, amount: credited, holdMs: BALANCE_HOLD_MS });
