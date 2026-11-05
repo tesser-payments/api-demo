@@ -141,6 +141,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 
 ```bash
 bun test            # unit tests for the retry and polling helpers
+bun run e2e         # E2E tests in e2e/ against sandbox, with .env.local
 bunx tsc --noEmit   # typecheck
 ```
 
@@ -154,6 +155,8 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 
 - `repository_dispatch` (`platform-deploy`): fired by `tesser-payments/platform` after its backend deploy from `main` succeeds.
 - `workflow_dispatch`: manual trigger from the GitHub Actions tab.
+- `push` to `main`: every push that updates `main`, merges and direct pushes alike.
+- `pull_request`: typecheck and unit tests only; the live E2E and the Slack alert are skipped.
 
 The E2E runs against sandbox, which is promoted from `main` separately. A run fired by a platform merge tests the sandbox release that is live at the time, not necessarily the code that was just merged.
 

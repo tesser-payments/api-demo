@@ -55,14 +55,18 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 
 | Path | What it holds |
 |------|---------------|
-| `index.ts` | The E2E flow above |
+| `index.ts` | The demo flow above, built from `src/api/` |
+| `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`), shared by the demo and the E2E tests |
+| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) |
+| `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
+| `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`) |
 | `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
 | `src/retry.ts` | `isTransient`, `retryOpts`, `postWithRetry`, `poll` (defaults: 60 attempts, 10 s apart) |
 | `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment` |
 | `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, then `index.ts` on sandbox |
+| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, then `index.ts` on sandbox (after a platform deploy, a merge to `main`, or by hand); pull requests get only the typecheck and unit tests |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
@@ -106,7 +110,9 @@ Each run creates new counterparties, ledgers and wallets in the sandbox workspac
 
 ### Extending
 
-- **A new step:** add a `stepN_…` function in `index.ts`, call it from `runSteps4Through7` (or `main` for one-off setup), and build it from the helpers above.
+- **A new API action:** add it to the matching resource file in `src/api/`, built from the helpers above, so the demo and the E2E tests share it.
+- **A new E2E flow:** add `e2e/<endpoint>/<provider path>.test.ts`, happy path only, using only `src/` (the public API).
+- **A new demo step:** add a `stepN_…` function in `index.ts` that calls `src/api/`, and call it from `runSteps4Through7` (or `main` for one-off setup).
 - **A new payout network:** add its wallet type, default address and address format to `payoutConfig`, update `.env.example` and the README, and verify a live run before making it a default.
 - **A new script:** put it in `scripts/`, import from `../src/`, and list it in the README.
 

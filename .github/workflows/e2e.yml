@@ -4,6 +4,18 @@ on:
   repository_dispatch:
     types: [platform-deploy]
   workflow_dispatch:
+  push:
+    branches: [main]
+  # Pull requests only get the typecheck and unit tests; the live E2E is skipped.
+  pull_request:
+
+# Live runs share the same wallets, so they queue instead of overlapping.
+# Pull requests get their own group so they never displace a queued live run.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.ref || 'e2e-live' }}
+  cancel-in-progress: false
+  # Keeps every waiting run; by default a new run replaces the one waiting.
+  queue: max
 
 jobs:
   e2e:
@@ -17,10 +29,13 @@ jobs:
       - name: Unit tests
         run: bun test
       - name: Run E2E
+        if: github.event_name != 'pull_request'
         # Covers the ledger compliance wait, which can take up to 35 min when
         # Circle is slow to accept. A typical run takes about 3 min.
         timeout-minutes: 50
-        run: bun run index.ts
+        # An explicit bash shell turns on pipefail, so the step still fails through tee.
+        shell: bash
+        run: bun run index.ts 2>&1 | tee e2e.log
         env:
           TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
@@ -32,8 +47,31 @@ jobs:
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+      - name: Extract the failure reason
+        id: reason
+        if: failure() && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if [ -f e2e.log ]; then
+            log=$(sed -E 's/\x1b\[[0-9;]*m//g' e2e.log)
+            reason=$(grep -E -A8 'Demo failed:|\(fail\)|^error:' <<<"$log" | head -30 || true)
+            [ -n "$reason" ] || reason=$(tail -15 <<<"$log")
+          else
+            reason="Failed before the E2E ran (install, typecheck or unit tests)."
+          fi
+          # Slack doesn't mask secrets the way the Actions log does.
+          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS"; do
+            if [ -n "$secret" ]; then reason=${reason//"$secret"/<redacted>}; fi
+          done
+          text=$(printf '*Reason:*\n```\n%s\n```' "${reason:0:2500}")
+          echo "json=$(jq -cn --arg text "$text" '$text')" >> "$GITHUB_OUTPUT"
+        env:
+          TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
+          TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
       - name: Notify Slack on failure
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         uses: slackapi/slack-github-action@v2
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -56,6 +94,13 @@ jobs:
                     { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
                     { "type": "mrkdwn", "text": "*Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>" }
                   ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ${{ steps.reason.outputs.json || '"*Reason:* not captured, see the logs"' }}
+                  }
                 }
               ]
             }
