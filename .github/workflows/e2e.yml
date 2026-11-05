@@ -9,6 +9,12 @@ on:
   # Pull requests only get the typecheck and unit tests; the live E2E is skipped.
   pull_request:
 
+# Live runs share the same wallets, so they queue instead of overlapping.
+# Pull requests get their own group so they never displace a queued live run.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.ref || 'e2e-live' }}
+  cancel-in-progress: false
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
