@@ -14,6 +14,8 @@ on:
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'e2e-live' }}
   cancel-in-progress: false
+  # Keeps every waiting run; by default a new run replaces the one waiting.
+  queue: max
 
 jobs:
   e2e:
@@ -58,7 +60,7 @@ jobs:
             reason="Failed before the E2E ran (install, typecheck or unit tests)."
           fi
           # Slack doesn't mask secrets the way the Actions log does.
-          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY"; do
+          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS"; do
             if [ -n "$secret" ]; then reason=${reason//"$secret"/<redacted>}; fi
           done
           text=$(printf '*Reason:*\n```\n%s\n```' "${reason:0:2500}")
@@ -67,6 +69,7 @@ jobs:
           TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
       - name: Notify Slack on failure
         if: failure() && github.event_name != 'pull_request'
         uses: slackapi/slack-github-action@v2
