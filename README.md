@@ -162,7 +162,7 @@ The inbound test receives into two managed wallets of the workspace, `E2E inboun
 
 ## CI / E2E testing
 
-This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) typechecks, runs the unit tests, then runs `index.ts` against sandbox.
+This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) typechecks, runs the unit tests, then runs `index.ts` and the inbound E2E test against staging.
 
 **Triggers:**
 
@@ -171,16 +171,16 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 - `push` to `main`: every push that updates `main`, merges and direct pushes alike.
 - `pull_request`: typecheck and unit tests only; the live E2E and the Slack alert are skipped.
 
-The E2E runs against sandbox, which is promoted from `main` separately. A run fired by a platform merge tests the sandbox release that is live at the time, not necessarily the code that was just merged.
+The E2E runs against staging, which the platform deploys from `main`, so a run fired by a platform merge tests the code that was just merged.
 
 ### Secrets and variables to configure in this repo (`api-demo`)
 
 | Secret | Description |
 |--------|-------------|
-| `TESSER_CLIENT_ID` | Tesser sandbox API client ID |
-| `TESSER_CLIENT_SECRET` | Tesser sandbox API client secret |
-| `TESSER_BASE_URL` | Tesser sandbox base URL (e.g. `https://sandbox.tesserx.co`) |
-| `TESSER_AUTH_URL` | Auth token endpoint URL |
+| `STAGING_TESSER_CLIENT_ID` | Tesser staging API client ID |
+| `STAGING_TESSER_CLIENT_SECRET` | Tesser staging API client secret |
+| `STAGING_TESSER_BASE_URL` | Tesser staging base URL |
+| `STAGING_TESSER_AUTH_URL` | Staging auth token endpoint URL |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |
 | `BENEFICIARY_WALLET_ADDRESS` | Optional. Must match `PAYMENT_NETWORK` |
 | `ENABLE_VARIANTS` | Optional. `A`, `B`, or `BOTH` |

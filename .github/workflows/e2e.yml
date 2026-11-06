@@ -29,6 +29,7 @@ jobs:
       - name: Unit tests
         run: bun test
       - name: Run E2E
+        id: demo
         if: github.event_name != 'pull_request'
         # Covers the ledger compliance wait, which can take up to 35 min when
         # Circle is slow to accept. A typical run takes about 3 min.
@@ -37,16 +38,27 @@ jobs:
         shell: bash
         run: bun run index.ts 2>&1 | tee e2e.log
         env:
-          TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
-          TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
-          TESSER_BASE_URL: ${{ secrets.TESSER_BASE_URL }}
-          TESSER_AUTH_URL: ${{ secrets.TESSER_AUTH_URL }}
+          TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
+          TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
           # Unset means STELLAR
           PAYMENT_NETWORK: ${{ vars.PAYMENT_NETWORK }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+      - name: Run inbound E2E
+        # Also runs when the payout flow failed, so one failure doesn't hide the other.
+        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' }}
+        timeout-minutes: 35
+        shell: bash
+        run: bun test --timeout 300000 ./e2e/payments/inbound-to-managed-wallet.test.ts 2>&1 | tee -a e2e.log
+        env:
+          TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
+          TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
       - name: Extract the failure reason
         id: reason
         if: failure() && github.event_name != 'pull_request'
@@ -66,8 +78,8 @@ jobs:
           text=$(printf '*Reason:*\n```\n%s\n```' "${reason:0:2500}")
           echo "json=$(jq -cn --arg text "$text" '$text')" >> "$GITHUB_OUTPUT"
         env:
-          TESSER_CLIENT_ID: ${{ secrets.TESSER_CLIENT_ID }}
-          TESSER_CLIENT_SECRET: ${{ secrets.TESSER_CLIENT_SECRET }}
+          TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
+          TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
       - name: Notify Slack on failure
