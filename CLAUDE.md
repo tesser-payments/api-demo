@@ -24,7 +24,7 @@ TESSER_CLIENT_SECRET=<your client secret>
 CIRCLE_API_KEY=<Circle Mint sandbox key>   # unless Circle is already connected
 ```
 
-Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`. The README has the full table.
+Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the inbound E2E `INBOUND_NETWORK` (default `POLYGON_AMOY`) and `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID`. The README has the full table.
 
 | Constant | Value |
 |----------|-------|
@@ -57,8 +57,9 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 |------|---------------|
 | `index.ts` | The demo flow above, built from `src/api/` |
 | `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`), shared by the demo and the E2E tests |
-| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) |
+| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) and `turnkey.ts` (sign a managed wallet's creation) |
 | `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
+| `src/inbound.ts` | `inboundNetwork()`: the network the inbound E2E simulates on, from the env |
 | `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`) |
 | `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
 | `src/retry.ts` | `isTransient`, `retryOpts`, `postWithRetry`, `poll` (defaults: 60 attempts, 10 s apart) |
@@ -72,13 +73,14 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 ### Rules for new code
 
 - **Wire types:** read responses through `src/types.ts` (snake_case, from the OpenAPI schema). `@tesser-payments/types` is camelCase and doesn't match what the API returns. Add fields to `src/types.ts` when you start reading them.
-- **Creates that must not happen twice** (deposits, simulate, payments, reviews): use `postWithRetry(label, path, body, { retryOn?, attempts? })`. It sets an `Idempotency-Key`, keeps it across transient retries, and renews it after a `retryOn` code, because the platform replays a cached 4xx for the same key.
+- **Creates that must not happen twice** (deposits, simulate, payments, reviews): use `postWithRetry(label, path, body, { retryOn?, attempts? })`. It sets an `Idempotency-Key`, keeps it across transient retries, and renews it after a `retryOn` code, because the platform replays a cached 4xx for the same key. Exceptions, sent once with plain `post`: `simulateInbound` (a 5xx can follow funds already sent) and `createManagedEvmWallet` (retry logs would print the Turnkey signature).
 - **Retry only what can recover:** network errors, 5xx, 429 and `idempotency-0001` (see `isTransient`), plus a named not-ready code via `retryOn`. Never add blanket retries: any other 4xx must fail on the first attempt.
 - **Waiting for async state:** use `poll(label, check, { timeoutMs, intervalMs?, timeoutHint })`. `check` returns `undefined` to keep waiting, a value to finish, or throws to stop. Give every wait an explicit limit and a `timeoutHint` naming the likely cause.
 - **Payments:** wait with `waitForPayment(id, { decide?, reason? })`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
 - **Deposits:** give each deposit its own random amount; Circle matches a simulated wire to its deposit by exact amount. Tag deposits and payments with `organization_reference_id` (`e2e-<RUN_ID>-<variant>-…`).
 - **Fail before calling the API** on bad configuration (see `payoutConfig`).
-- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key) and the auth response. Step 1.5 redacts the key from its error. CI logs of this public repo are public.
+- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key and a managed wallet's Turnkey signature) and the auth response. Step 1.5 redacts the key from its error, and `createManagedEvmWallet` the signature. CI logs of this public repo are public.
+- **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the inbound E2E's dedicated managed wallets).
 - **Public repo:** keep internal ids, organization names and private URLs out of commits and code.
 
 ### Environment prerequisites (per Tesser organization)
@@ -98,6 +100,9 @@ The flow only passes when the organization's Circle setup is complete. None of t
 - The simulate response shows the deposit as it was **before** the simulation.
 - Ledger compliance usually passes in about 10 s; after its first few checks the platform only rechecks every 30 min.
 - The platform caches deterministic 4xx responses per `Idempotency-Key`; 5xx, 401, 403, 429 and validation errors aren't cached.
+- `simulate-inbound` really sends 1 USDC from the platform's playground wallet, so a repeated call sends again. It answers 201 with the screened payment, or 202 `pending` when detection outlasts its wait, sometimes without a `payment_id`; `GET /v1/payments` can't filter by transaction hash. An empty playground wallet comes back as a 500.
+- Accounts expose only `available_balance`, per currency and network; there is no total balance in the API. An inbound credits it at detection, whatever the risk verdict, and finality doesn't move it again.
+- Creating a managed wallet needs a Turnkey-stamped `CREATE_WALLET` request for the workspace's sub-organization, whose id isn't in any API response.
 
 ### Verifying a change
 

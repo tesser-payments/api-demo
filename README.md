@@ -61,7 +61,11 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `PAYMENT_NETWORK` | No | Payout network: `STELLAR` (default) or an EVM testnet such as `ETHEREUM_SEPOLIA`. Solana isn't supported here |
 | `BENEFICIARY_WALLET_ADDRESS` | No | Payout address. It must match `PAYMENT_NETWORK`. Defaults to a known-good address for the network (see [Payout networks](#payout-networks)) |
 | `ENABLE_VARIANTS` | No | `A`, `B`, or `BOTH` (default: `BOTH`) |
-| `DEBUG_MODE` | No | Set to `true` to log all request and response payloads. They include secrets such as the Circle key and the access token, so don't share the output |
+| `DEBUG_MODE` | No | Set to `true` to log all request and response payloads. They include secrets such as the Circle key, the access token and a managed wallet's Turnkey signature, so don't share the output |
+| `INBOUND_NETWORK` | No | Network the inbound E2E simulates on: `POLYGON_AMOY` (default, finalizes within seconds), `BASE_SEPOLIA`, `ETHEREUM_SEPOLIA` or `TEMPO_MODERATO` |
+| `TURNKEY_API_PUBLIC_KEY` | No | With the two below, lets the inbound E2E create its managed wallets when they're missing. A Turnkey API key on the workspace's sub-organization; restrict it with a Turnkey policy to creating wallets |
+| `TURNKEY_API_PRIVATE_KEY` | No | Private half of that API key |
+| `TURNKEY_ORGANIZATION_ID` | No | The workspace's Turnkey sub-organization ID |
 | `TESSER_FROM_ACCOUNT_ID` | No | Source account for the helper scripts |
 | `TESSER_TO_ACCOUNT_ID` | No | Destination account for `tesser-payment-test.ts` |
 | `TESSER_REBALANCE_ID` | No | Rebalance to fetch with `get-rebalance.ts` |
@@ -145,11 +149,20 @@ bun run e2e         # E2E tests in e2e/ against sandbox, with .env.local
 bunx tsc --noEmit   # typecheck
 ```
 
+The E2E tests in `e2e/`:
+
+| Test | What it covers |
+|------|----------------|
+| `payments/circle-ledger-to-wallet` | A USD wire into a Circle ledger, paid out as USDC to an unmanaged wallet, at org and tenant level |
+| `payments/inbound-to-managed-wallet` | 1 USDC sent to a managed wallet with `POST /v1/payments/simulate-inbound`, once automatically approved and once held for review and approved. Checks the wallet is credited exactly 1 USDC and the payment completes |
+
+The inbound test receives into two managed wallets of the workspace, `E2E inbound, auto-approved` and `E2E inbound, manual review`, used by nothing else so their balances only move by the test's own inbound. It creates them when the `TURNKEY_*` variables are set; otherwise create them once in the dashboard.
+
 ---
 
 ## CI / E2E testing
 
-This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) typechecks, runs the unit tests, then runs `index.ts` against sandbox.
+This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) typechecks, runs the unit tests, then runs `index.ts` and the inbound E2E test against staging.
 
 **Triggers:**
 
@@ -158,16 +171,16 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 - `push` to `main`: every push that updates `main`, merges and direct pushes alike.
 - `pull_request`: typecheck and unit tests only; the live E2E and the Slack alert are skipped.
 
-The E2E runs against sandbox, which is promoted from `main` separately. A run fired by a platform merge tests the sandbox release that is live at the time, not necessarily the code that was just merged.
+The E2E runs against staging, which the platform deploys from `main`, so a run fired by a platform merge tests the code that was just merged.
 
 ### Secrets and variables to configure in this repo (`api-demo`)
 
 | Secret | Description |
 |--------|-------------|
-| `TESSER_CLIENT_ID` | Tesser sandbox API client ID |
-| `TESSER_CLIENT_SECRET` | Tesser sandbox API client secret |
-| `TESSER_BASE_URL` | Tesser sandbox base URL (e.g. `https://sandbox.tesserx.co`) |
-| `TESSER_AUTH_URL` | Auth token endpoint URL |
+| `STAGING_TESSER_CLIENT_ID` | Tesser staging API client ID |
+| `STAGING_TESSER_CLIENT_SECRET` | Tesser staging API client secret |
+| `STAGING_TESSER_BASE_URL` | Tesser staging base URL |
+| `STAGING_TESSER_AUTH_URL` | Staging auth token endpoint URL |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |
 | `BENEFICIARY_WALLET_ADDRESS` | Optional. Must match `PAYMENT_NETWORK` |
 | `ENABLE_VARIANTS` | Optional. `A`, `B`, or `BOTH` |
