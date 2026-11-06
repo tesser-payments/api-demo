@@ -28,7 +28,7 @@ jobs:
         run: bunx tsc --noEmit
       - name: Unit tests
         run: bun test
-      - name: Run E2E
+      - name: Run Circle payout E2E
         id: demo
         if: github.event_name != 'pull_request'
         # Covers the ledger compliance wait, which can take up to 35 min when
