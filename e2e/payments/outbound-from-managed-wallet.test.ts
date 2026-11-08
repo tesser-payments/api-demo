@@ -48,10 +48,12 @@ let runWallet: Account | undefined;
 beforeAll(async () => {
   await requireKotlinSigner();
   await authenticate();
-  originatorBankId = await findOrCreateOriginatorBank(ORIGINATOR_NAME);
-  for (const { walletName, address } of scenarios) {
-    beneficiaryWalletIds.set(walletName, await findOrCreateBeneficiaryWallet({ name: walletName, address }));
-  }
+  const [bankId, ...walletIds] = await Promise.all([
+    findOrCreateOriginatorBank(ORIGINATOR_NAME),
+    ...scenarios.map(({ walletName, address }) => findOrCreateBeneficiaryWallet({ name: walletName, address })),
+  ]);
+  originatorBankId = bankId;
+  scenarios.forEach(({ walletName }, i) => beneficiaryWalletIds.set(walletName, walletIds[i]!));
 });
 
 const exactly = (amount: number) => amount.toFixed(6);

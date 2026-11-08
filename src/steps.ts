@@ -28,7 +28,7 @@ export interface WaitForPaymentOptions {
   decide?: (payment: Payment) => Promise<boolean>;
   /** Recorded with the review decision. */
   reason?: string;
-  /** Called once per transaction a step asks to sign, again only if it throws; resolves to its `signature`. */
+  /** Resolves to the `signature` for each transaction a step asks to sign; called again only after a transient error. */
   sign?: (step: Step, payment: Payment) => Promise<string>;
   timeoutMs?: number;
   intervalMs?: number;
@@ -102,7 +102,8 @@ export async function waitForPayment(
       intervalMs,
       timeoutHint: () => {
         const reviewHint = !decide && last.includes("risk=awaiting_decision") && "approve or reject the payment's review";
-        return [`last seen ${last || "nothing"}`, reviewHint].filter(Boolean).join("; ");
+        const signHint = !sign && last.includes("=signature_requested") && "a step is waiting for a signature; pass sign";
+        return [`last seen ${last || "nothing"}`, reviewHint, signHint].filter(Boolean).join("; ");
       },
     },
   );

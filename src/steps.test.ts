@@ -143,6 +143,13 @@ describe("waitForPayment", () => {
     );
   });
 
+  test("without sign, a timeout says a step is waiting for a signature", async () => {
+    await serve(payment("automatically_approved", [step("signature_requested", { unsigned_transaction: "0x02aa" })]));
+    await expect(waitForPayment("p1", { timeoutMs: 50, intervalMs: 1 })).rejects.toThrow(
+      "a step is waiting for a signature; pass sign",
+    );
+  });
+
   test("a failed step fails at once with its reasons", async () => {
     await serve(
       payment("automatically_approved", [

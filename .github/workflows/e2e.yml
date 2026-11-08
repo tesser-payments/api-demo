@@ -27,6 +27,7 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
       - name: Unit tests
+        id: unit
         run: bun test
       - name: Run Circle payout E2E
         id: demo
@@ -61,17 +62,17 @@ jobs:
           TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
       # The Kotlin steps come last: a broken SDK release fails only the outbound E2E.
       - uses: actions/setup-java@v4
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
       # Pull requests run the committed gradle-wrapper.jar, so check it is Gradle's.
       - uses: gradle/actions/wrapper-validation@v6
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
       - name: Build and test the Kotlin signer
         id: signer
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         working-directory: signers/kotlin
         shell: bash
         run: |
