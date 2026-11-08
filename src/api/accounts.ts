@@ -1,7 +1,7 @@
 import { get, getAll, post } from "../client.ts";
 import type { Payout } from "../payout.ts";
 import { isTransient, poll } from "../retry.ts";
-import type { Account, Envelope } from "../types.ts";
+import type { Account, AccountType, Envelope } from "../types.ts";
 
 export interface FundingBank {
   id: string;
@@ -10,6 +10,14 @@ export interface FundingBank {
 }
 
 const toCents = (amount: string) => Math.round(parseFloat(amount) * 100);
+
+const TEST_BANK_DETAILS = {
+  bank_name: "Hancock Whitney Bank",
+  bank_code_type: "ROUTING",
+  bank_identifier_code: "065400153",
+  bank_account_number: "000999999991",
+  bank_swift_code: "BARCGB22",
+};
 
 /**
  * The workspace's own fiat bank (unmanaged, no tenant, no counterparty) that
@@ -25,15 +33,31 @@ export async function findOrCreateFundingBank(): Promise<FundingBank> {
   const name = "Depositing Bank";
   const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
     name,
-    bank_name: "Hancock Whitney Bank",
-    bank_code_type: "ROUTING",
-    bank_identifier_code: "065400153",
-    bank_account_number: "000999999991",
+    ...TEST_BANK_DETAILS,
     tenant_id: null,
     counterparty_id: null,
-    bank_swift_code: "BARCGB22",
   });
   return { id: bank.data.id, name, created: true };
+}
+
+/** A fiat bank account owned by the counterparty `counterpartyId`. */
+export async function createCounterpartyBank({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
+  const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name,
+    ...TEST_BANK_DETAILS,
+    counterparty_id: counterpartyId,
+  });
+  return bank.data.id;
+}
+
+/** A counterparty's account of `type` named exactly `name`; throws if several share it. */
+export async function findCounterpartyAccount({ type, name }: { type: AccountType; name: string }): Promise<Account | undefined> {
+  return findOnlyAccountNamed({
+    name,
+    filters: `type=${type}`,
+    kind: "counterparty accounts",
+    isOwner: (a) => !!a.counterparty_id,
+  });
 }
 
 export async function createCircleLedger({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
@@ -56,7 +80,7 @@ export async function createUnmanagedWallet({
 }: {
   counterpartyId: string;
   name: string;
-  payout: Payout;
+  payout: Pick<Payout, "walletType" | "address">;
 }): Promise<string> {
   const wallet = await post<{ data: { id: string } }>("/v1/accounts/wallets", {
     name,
@@ -70,12 +94,30 @@ export async function createUnmanagedWallet({
 
 /** The workspace's own managed EVM wallet named exactly `name`; throws if several share it. */
 export async function findManagedEvmWallet(name: string): Promise<Account | undefined> {
-  const candidates = await getAll<Account>(
-    `/v1/accounts?type=stablecoin_ethereum&is_managed=true&search=${encodeURIComponent(name)}`,
-  );
-  const matches = candidates.filter((a) => a.name === name && !a.tenant_id && !a.counterparty_id);
+  return findOnlyAccountNamed({
+    name,
+    filters: "type=stablecoin_ethereum&is_managed=true",
+    kind: "managed wallets",
+    isOwner: (a) => !a.tenant_id && !a.counterparty_id,
+  });
+}
+
+// `search` matches part of the name, so the exact match is filtered here.
+async function findOnlyAccountNamed({
+  name,
+  filters,
+  kind,
+  isOwner,
+}: {
+  name: string;
+  filters: string;
+  kind: string;
+  isOwner: (account: Account) => boolean;
+}): Promise<Account | undefined> {
+  const candidates = await getAll<Account>(`/v1/accounts?${filters}&search=${encodeURIComponent(name)}`);
+  const matches = candidates.filter((a) => a.name === name && isOwner(a));
   if (matches.length > 1) {
-    throw new Error(`${matches.length} managed wallets are named "${name}"; delete the extras so exactly one remains`);
+    throw new Error(`${matches.length} ${kind} are named "${name}"; delete the extras so exactly one remains`);
   }
   return matches[0];
 }

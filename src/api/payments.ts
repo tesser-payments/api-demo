@@ -4,10 +4,11 @@ import { poll, postWithRetry } from "../retry.ts";
 import type { Envelope, MockedRiskStatus, Payment, SimulatedInboundPending } from "../types.ts";
 
 /**
- * A same-currency payout from one account to another. The source account
- * funds it, so it must belong to a counterparty or tenant.
+ * A same-currency payout from one account to another. `fundingAccountId` is the
+ * Travel Rule originator's account (a counterparty's or tenant's), or the source itself.
  */
 export async function createPayment({
+  fundingAccountId,
   fromAccountId,
   toAccountId,
   amount,
@@ -15,6 +16,7 @@ export async function createPayment({
   network,
   reference,
 }: {
+  fundingAccountId: string;
   fromAccountId: string;
   toAccountId: string;
   amount: string;
@@ -27,7 +29,7 @@ export async function createPayment({
     "/v1/payments",
     {
       organization_reference_id: reference,
-      funding_account_id: fromAccountId,
+      funding_account_id: fundingAccountId,
       desired: {
         from: { account_id: fromAccountId, amount, currency, network },
         to: { account_id: toAccountId, currency, network },
