@@ -24,7 +24,7 @@ TESSER_CLIENT_SECRET=<your client secret>
 CIRCLE_API_KEY=<Circle Mint sandbox key>   # unless Circle is already connected
 ```
 
-Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the inbound E2E `INBOUND_NETWORK` (default `POLYGON_AMOY`) and `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID`. The README has the full table.
+Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the inbound E2E `INBOUND_NETWORK` (default `POLYGON_AMOY`) and `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID`, and for the outbound E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 21 to build its signer (`bun run build:signer`). The README has the full table.
 
 | Constant | Value |
 |----------|-------|
@@ -57,7 +57,9 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 |------|---------------|
 | `index.ts` | The demo flow above, built from `src/api/` |
 | `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`), shared by the demo and the E2E tests |
-| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) and `turnkey.ts` (sign a managed wallet's creation) |
+| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank), `turnkey.ts` (sign a managed wallet's creation) and `kotlin-signer.ts` (sign a payment step with the Kotlin SDK through `signers/kotlin`) |
+| `signers/kotlin/` | Gradle CLI that signs a step with the published Tesser Kotlin SDK (`xyz.tesser:sdk`), the SDK customers run: step JSON on stdin, `signature` on stdout, key from `SIGNING_*`. `bun run build:signer` installs it; its tests run with `./gradlew test` |
+| `src/testing/` | Helpers only tests use, e.g. a throwaway Turnkey API key |
 | `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
 | `src/inbound.ts` | `inboundNetwork()`: the network the inbound E2E simulates on, from the env |
 | `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`) |
@@ -67,20 +69,20 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, then `index.ts` on sandbox (after a platform deploy, a merge to `main`, or by hand); pull requests get only the typecheck and unit tests |
+| `.github/workflows/e2e.yml` | CI: typecheck, signer build and tests, unit tests, then `index.ts`, the inbound and the outbound E2E on staging (after a platform deploy, a merge to `main`, or by hand); pull requests stop after the unit tests |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
 
 - **Wire types:** read responses through `src/types.ts` (snake_case, from the OpenAPI schema). `@tesser-payments/types` is camelCase and doesn't match what the API returns. Add fields to `src/types.ts` when you start reading them.
-- **Creates that must not happen twice** (deposits, simulate, payments, reviews): use `postWithRetry(label, path, body, { retryOn?, attempts? })`. It sets an `Idempotency-Key`, keeps it across transient retries, and renews it after a `retryOn` code, because the platform replays a cached 4xx for the same key. Exceptions, sent once with plain `post`: `simulateInbound` (a 5xx can follow funds already sent) and `createManagedEvmWallet` (retry logs would print the Turnkey signature).
+- **Creates that must not happen twice** (deposits, simulate, payments, reviews): use `postWithRetry(label, path, body, { retryOn?, attempts? })`. It sets an `Idempotency-Key`, keeps it across transient retries, and renews it after a `retryOn` code, because the platform replays a cached 4xx for the same key. Exceptions, sent once with plain `post`: `simulateInbound` (a 5xx can follow funds already sent) and `createManagedEvmWallet` (retry logs would print the Turnkey signature). The step sign request in `waitForPayment` also uses plain `post`, with one `Idempotency-Key` per step that a retry reuses with the same signature.
 - **Retry only what can recover:** network errors, 5xx, 429 and `idempotency-0001` (see `isTransient`), plus a named not-ready code via `retryOn`. Never add blanket retries: any other 4xx must fail on the first attempt.
 - **Waiting for async state:** use `poll(label, check, { timeoutMs, intervalMs?, timeoutHint })`. `check` returns `undefined` to keep waiting, a value to finish, or throws to stop. Give every wait an explicit limit and a `timeoutHint` naming the likely cause.
-- **Payments:** wait with `waitForPayment(id, { decide?, reason? })`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
+- **Payments:** wait with `waitForPayment(id, { decide?, reason?, sign? })`. `sign(step, payment)` returns the `signature` for a `signature_requested` step and is called once per step; the E2E passes `signWithKotlinSdk`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
 - **Deposits:** give each deposit its own random amount; Circle matches a simulated wire to its deposit by exact amount. Tag deposits and payments with `organization_reference_id` (`e2e-<RUN_ID>-<variant>-…`).
 - **Fail before calling the API** on bad configuration (see `payoutConfig`).
-- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key and a managed wallet's Turnkey signature) and the auth response. Step 1.5 redacts the key from its error, and `createManagedEvmWallet` the signature. CI logs of this public repo are public.
-- **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the inbound E2E's dedicated managed wallets).
+- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key, a managed wallet's Turnkey signature and a step's signature) and the auth response. Step 1.5 redacts the key from its error, `createManagedEvmWallet` the wallet signature and `waitForPayment` the step signature. The Kotlin signer gets only `PATH`, `JAVA_HOME` and `SIGNING_*`, never the API credentials. CI logs of this public repo are public.
+- **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the inbound E2E's dedicated managed wallets and the outbound E2E's `E2E outbound`).
 - **Public repo:** keep internal ids, organization names and private URLs out of commits and code.
 
 ### Environment prerequisites (per Tesser organization)
@@ -103,10 +105,12 @@ The flow only passes when the organization's Circle setup is complete. None of t
 - `simulate-inbound` really sends 1 USDC from the platform's playground wallet, so a repeated call sends again. It answers 201 with the screened payment, or 202 `pending` when detection outlasts its wait, sometimes without a `payment_id`; `GET /v1/payments` can't filter by transaction hash. An empty playground wallet comes back as a 500.
 - Accounts expose only `available_balance`, per currency and network; there is no total balance in the API. An inbound credits it at detection, whatever the risk verdict, and finality doesn't move it again.
 - Creating a managed wallet needs a Turnkey-stamped `CREATE_WALLET` request for the workspace's sub-organization, whose id isn't in any API response.
+- A payment from a managed wallet asks for a signature per wallet step (`signature_requested`, with `unsigned_transaction`). The sign request reserves the amount, so `available_balance` drops right then; gas is sponsored, so only the payout leaves the wallet.
+- `funding_account_id` must belong to a counterparty or tenant (`payments-3099`). A payment from a workspace-owned wallet names a counterparty's bank account as its funding account (the Travel Rule originator).
 
 ### Verifying a change
 
-1. `bunx tsc --noEmit` and `bun test`
+1. `bunx tsc --noEmit` and `bun test`; if the signer changed, `bun run build:signer` first and `./gradlew test` in `signers/kotlin`
 2. `ENABLE_VARIANTS=BOTH bun run index.ts` on sandbox (about 2.5 min on Stellar)
 3. If the payout path changed: `PAYMENT_NETWORK=ETHEREUM_SEPOLIA BENEFICIARY_WALLET_ADDRESS= ENABLE_VARIANTS=A bun run index.ts` (about 4 min), and the review and rejection paths with the EVM risk-test addresses
 4. If retries changed: an invalid request must fail on its first attempt, in under a second

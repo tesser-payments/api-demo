@@ -70,6 +70,20 @@ jobs:
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
+      - name: Run outbound E2E
+        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' }}
+        # Above both scenarios' 11 min test timeouts, so a slow run still prints its failure.
+        timeout-minutes: 25
+        shell: bash
+        run: bun test --timeout 300000 ./e2e/payments/outbound-from-managed-wallet.test.ts 2>&1 | tee -a e2e.log
+        env:
+          TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
+          TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
+          SIGNING_PUBLIC_KEY: ${{ secrets.STAGING_TURNKEY_API_PUBLIC_KEY }}
+          SIGNING_PRIVATE_KEY: ${{ secrets.STAGING_TURNKEY_API_PRIVATE_KEY }}
+          SIGNING_ENCLAVE_ID: ${{ secrets.STAGING_TURNKEY_ORGANIZATION_ID }}
       - name: Extract the failure reason
         id: reason
         if: failure() && github.event_name != 'pull_request'
@@ -83,7 +97,7 @@ jobs:
             reason="Failed before the E2E ran (install, typecheck, signer build or unit tests)."
           fi
           # Slack doesn't mask secrets the way the Actions log does.
-          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS"; do
+          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS" "$SIGNING_PRIVATE_KEY"; do
             if [ -n "$secret" ]; then reason=${reason//"$secret"/<redacted>}; fi
           done
           text=$(printf '*Reason:*\n```\n%s\n```' "${reason:0:2500}")
@@ -93,6 +107,7 @@ jobs:
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
+          SIGNING_PRIVATE_KEY: ${{ secrets.STAGING_TURNKEY_API_PRIVATE_KEY }}
       - name: Notify Slack on failure
         if: failure() && github.event_name != 'pull_request'
         uses: slackapi/slack-github-action@v2
