@@ -24,7 +24,6 @@ fun main(args: Array<String>) {
     }
 }
 
-/** Signs `input` with the Tesser Kotlin SDK, using the key in `SIGNING_*` and the API at `TESSER_BASE_URL`. */
 suspend fun runCommand(command: String?, input: String, env: Map<String, String>): String {
     val request = Json.parseToJsonElement(input).jsonObject
     return when (command) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: failure-reason.sh <log> [variable names whose values to redact...]
-# Prints the failure lines of a test log as the GitHub output `text`.
+# Prints the failure lines of a test log, for the report job's Slack message.
 set -euo pipefail
 
 log_file=$1
@@ -20,5 +20,4 @@ for name in "$@"; do
   if [ -n "$secret" ]; then reason=${reason//"$secret"/<redacted>}; fi
 done
 
-delimiter="REASON_${RANDOM}${RANDOM}"
-printf 'text<<%s\n%s\n%s\n' "$delimiter" "${reason:0:2500}" "$delimiter"
+printf '%s\n' "${reason:0:2500}"

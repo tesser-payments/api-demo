@@ -21,12 +21,11 @@ concurrency:
   # Keeps every waiting run; by default a new run replaces the one waiting.
   queue: max
 
-# checks, then circle and managed-wallet in parallel, then one Slack message for every failed job.
+# A failed job saves its reason as an artifact, not a job output: GitHub drops any
+# output that contains a secret's value, and some secrets here are plain words.
 jobs:
   checks:
     runs-on: ubuntu-latest
-    outputs:
-      reason: ${{ steps.reason.outputs.text }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -38,17 +37,20 @@ jobs:
       - name: Unit tests
         shell: bash
         run: bun test 2>&1 | tee -a e2e.log
-      - name: Extract the failure reason
-        id: reason
+      - name: Save the failure reason
         if: failure() && github.event_name != 'pull_request'
-        run: .github/scripts/failure-reason.sh e2e.log >> "$GITHUB_OUTPUT"
+        run: mkdir -p failure-reason && .github/scripts/failure-reason.sh e2e.log > failure-reason/checks.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() && github.event_name != 'pull_request'
+        with:
+          name: failure-reason-checks
+          path: failure-reason/
+          retention-days: 1
 
   circle:
     needs: checks
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    outputs:
-      reason: ${{ steps.reason.outputs.text }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -70,23 +72,30 @@ jobs:
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
-      - name: Extract the failure reason
-        id: reason
+      # Redacts every sensitive secret this job uses; ENABLE_VARIANTS and DEBUG_MODE are plain settings.
+      - name: Save the failure reason
         if: failure()
         run: >-
-          .github/scripts/failure-reason.sh e2e.log
-          TESSER_CLIENT_ID TESSER_CLIENT_SECRET CIRCLE_API_KEY BENEFICIARY_WALLET_ADDRESS >> "$GITHUB_OUTPUT"
+          mkdir -p failure-reason && .github/scripts/failure-reason.sh e2e.log
+          TESSER_CLIENT_ID TESSER_CLIENT_SECRET TESSER_BASE_URL TESSER_AUTH_URL CIRCLE_API_KEY BENEFICIARY_WALLET_ADDRESS
+          > failure-reason/circle.txt
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
           BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: failure-reason-circle
+          path: failure-reason/
+          retention-days: 1
 
   managed-wallet:
     needs: checks
     runs-on: ubuntu-latest
-    outputs:
-      reason: ${{ steps.reason.outputs.text }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -106,13 +115,14 @@ jobs:
           echo "Signing with the latest Kotlin SDK: $(ls build/install/tesser-signer/lib | grep -E '^sdk-[0-9]')"
       - name: Unit tests that run the Kotlin signer
         shell: bash
-        run: bun test src/setup/kotlin-signer.test.ts 2>&1 | tee -a e2e.log
+        # Each test starts a JVM, which can outlast bun's 5 s default on a busy runner.
+        run: bun test --timeout 30000 src/setup/kotlin-signer.test.ts 2>&1 | tee -a e2e.log
         env:
           REQUIRE_KOTLIN_SIGNER: "1"
       - name: Run managed wallet E2E
         if: github.event_name != 'pull_request'
-        # Above its tests' timeouts (2 + 2 × 12 + 2 × 11 min), so a slow run still prints its failure.
-        timeout-minutes: 50
+        # Above beforeAll's 5 min and the tests' 2 + 2 × 12 + 2 × 11 min, so a slow run still prints its failure.
+        timeout-minutes: 55
         shell: bash
         run: bun test --timeout 300000 ./e2e/payments/managed-wallet.test.ts 2>&1 | tee -a e2e.log
         env:
@@ -123,16 +133,27 @@ jobs:
           SIGNING_PUBLIC_KEY: ${{ secrets.STAGING_SIGNING_PUBLIC_KEY }}
           SIGNING_PRIVATE_KEY: ${{ secrets.STAGING_SIGNING_PRIVATE_KEY }}
           SIGNING_ENCLAVE_ID: ${{ secrets.STAGING_SIGNING_ENCLAVE_ID }}
-      - name: Extract the failure reason
-        id: reason
+      - name: Save the failure reason
         if: failure() && github.event_name != 'pull_request'
         run: >-
-          .github/scripts/failure-reason.sh e2e.log
-          TESSER_CLIENT_ID TESSER_CLIENT_SECRET SIGNING_PRIVATE_KEY >> "$GITHUB_OUTPUT"
+          mkdir -p failure-reason && .github/scripts/failure-reason.sh e2e.log
+          TESSER_CLIENT_ID TESSER_CLIENT_SECRET TESSER_BASE_URL TESSER_AUTH_URL
+          SIGNING_PUBLIC_KEY SIGNING_PRIVATE_KEY SIGNING_ENCLAVE_ID
+          > failure-reason/managed-wallet.txt
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
+          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
+          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
+          SIGNING_PUBLIC_KEY: ${{ secrets.STAGING_SIGNING_PUBLIC_KEY }}
           SIGNING_PRIVATE_KEY: ${{ secrets.STAGING_SIGNING_PRIVATE_KEY }}
+          SIGNING_ENCLAVE_ID: ${{ secrets.STAGING_SIGNING_ENCLAVE_ID }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() && github.event_name != 'pull_request'
+        with:
+          name: failure-reason-managed-wallet
+          path: failure-reason/
+          retention-days: 1
 
   report:
     needs: [checks, circle, managed-wallet]
@@ -140,20 +161,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        # A job can fail before saving its reason; the message then says so.
+        continue-on-error: true
+        with:
+          pattern: failure-reason-*
+          merge-multiple: true
+          path: failure-reasons
       - name: Build the Slack message
         id: message
         run: .github/scripts/slack-failure-payload.sh >> "$GITHUB_OUTPUT"
         env:
+          REASONS_DIR: failure-reasons
           REPOSITORY: ${{ github.repository }}
           TRIGGER: ${{ github.event_name }}
           COMMIT: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CHECKS_RESULT: ${{ needs.checks.result }}
-          CHECKS_REASON: ${{ needs.checks.outputs.reason }}
           CIRCLE_RESULT: ${{ needs.circle.result }}
-          CIRCLE_REASON: ${{ needs.circle.outputs.reason }}
           MANAGED_WALLET_RESULT: ${{ needs.managed-wallet.result }}
-          MANAGED_WALLET_REASON: ${{ needs.managed-wallet.outputs.reason }}
       - name: Notify Slack
         uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
         with:

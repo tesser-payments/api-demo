@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import { submitStepSignature } from "./api/payments.ts";
-import { get, post } from "./client.ts";
+import { ApiError, get, post } from "./client.ts";
 import { poll } from "./retry.ts";
 import type { Envelope, Payment, Step } from "./types.ts";
 
@@ -18,6 +18,8 @@ export function assertNoFailedStep(kind: string, steps: Step[]): void {
     .join("; ");
   throw new Error(`${kind} step ${failed.step_sequence} failed: ${reasons || "no reason given"}`);
 }
+
+const STEP_NOT_SIGNABLE = "payments-3060";
 
 export interface WaitForPaymentOptions {
   /**
@@ -84,12 +86,18 @@ export async function waitForPayment(
         if (known?.submitted) continue;
         const request = known ?? { signature: await sign(step, payment), idempotencyKey: crypto.randomUUID(), submitted: false };
         signatures.set(transactionKey, request);
-        await submitStepSignature({
-          paymentId,
-          stepId: step.id,
-          signature: request.signature,
-          idempotencyKey: request.idempotencyKey,
-        });
+        try {
+          await submitStepSignature({
+            paymentId,
+            stepId: step.id,
+            signature: request.signature,
+            idempotencyKey: request.idempotencyKey,
+          });
+        } catch (error) {
+          // A resend after a lost response: 5xx isn't idempotency-cached, so the platform reports the step signed.
+          const alreadyTaken = known !== undefined && error instanceof ApiError && error.hasCode(STEP_NOT_SIGNABLE);
+          if (!alreadyTaken) throw error;
+        }
         request.submitted = true;
         console.log(pc.dim(`  Signed step ${step.step_sequence}`));
       }

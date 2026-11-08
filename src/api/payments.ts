@@ -62,7 +62,7 @@ export async function submitStepSignature({
     await post(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
   } catch (error) {
     // The request body is in the error message; a signature authorizes moving the wallet's funds.
-    if (error instanceof Error) error.message = error.message.replaceAll(signature, "<redacted>");
+    if (error instanceof Error && signature) error.message = error.message.replaceAll(signature, "<redacted>");
     throw error;
   }
 }

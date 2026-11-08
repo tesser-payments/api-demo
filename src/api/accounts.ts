@@ -106,7 +106,7 @@ export async function createManagedEvmWallet({ name, signature }: { name: string
     );
     return wallet.data;
   } catch (err) {
-    if (err instanceof Error) err.message = err.message.replaceAll(signature, "<redacted>");
+    if (err instanceof Error && signature) err.message = err.message.replaceAll(signature, "<redacted>");
     throw err;
   }
 }

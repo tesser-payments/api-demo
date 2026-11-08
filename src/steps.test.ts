@@ -38,8 +38,8 @@ let logSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
 const reviews: { body: unknown; key: string | undefined }[] = [];
 const signs: { path: string; body: unknown; key: string | undefined }[] = [];
-// Statuses the sign endpoint answers, in order; 200 once they run out.
-const signStatuses: number[] = [];
+// What the sign endpoint answers, in order; 200 once they run out.
+const signResponses: { status: number; code?: string }[] = [];
 
 // Auth, then each GET returns the next payment state; review and sign POSTs are recorded.
 async function serve(...states: Payment[]) {
@@ -52,9 +52,9 @@ async function serve(...states: Payment[]) {
     }
     if (String(url).endsWith("/sign")) {
       signs.push({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body)), key: headers["Idempotency-Key"] });
-      const status = signStatuses.shift() ?? 200;
+      const { status, code = "payments-0000" } = signResponses.shift() ?? { status: 200 };
       if (status !== 200) {
-        return Response.json({ errors: [{ error_code: "payments-0000", error_message: "refused" }] }, { status });
+        return Response.json({ errors: [{ error_code: code, error_message: "refused" }] }, { status });
       }
       return Response.json({ data: {} });
     }
@@ -67,7 +67,7 @@ async function serve(...states: Payment[]) {
 beforeEach(() => {
   reviews.length = 0;
   signs.length = 0;
-  signStatuses.length = 0;
+  signResponses.length = 0;
   process.env.TESSER_CLIENT_ID ||= "test";
   process.env.TESSER_CLIENT_SECRET ||= "test";
   logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -208,7 +208,7 @@ describe("waitForPayment signing", () => {
   });
 
   test("retries a failed sign request with the same signature and Idempotency-Key", async () => {
-    signStatuses.push(503);
+    signResponses.push({ status: 503 });
     await serve(awaitingSignature(), awaitingSignature(), payment("automatically_approved", [step("completed")]));
     const sign = mock(async () => "signature-1");
 
@@ -219,8 +219,21 @@ describe("waitForPayment signing", () => {
     expect(signs[1]).toEqual(signs[0]!);
   });
 
+  test("counts a resent signature as submitted when the platform already took the first one", async () => {
+    // The first request landed but answered 502; 5xx isn't idempotency-cached, so the resend sees a signed step.
+    signResponses.push({ status: 502 }, { status: 400, code: "payments-3060" });
+    await serve(awaitingSignature(), awaitingSignature(), awaitingSignature(), payment("automatically_approved", [step("completed")]));
+    const sign = mock(async () => "signature-1");
+
+    const result = await waitForPayment("p1", { ...fast, sign });
+
+    expect(result.steps[0]!.status).toBe("completed");
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(signs).toHaveLength(2);
+  });
+
   test("keeps the signature out of the error when the sign request is refused", async () => {
-    signStatuses.push(400);
+    signResponses.push({ status: 400 });
     await serve(awaitingSignature());
 
     const error = (await waitForPayment("p1", { ...fast, sign: async () => "signature-secret" }).catch((e) => e)) as Error;

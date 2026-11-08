@@ -20,9 +20,17 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
-// Gradle caches a dynamic version for 24 h; check for a new release on every build.
 configurations.all {
-    resolutionStrategy.cacheDynamicVersionsFor(0, TimeUnit.SECONDS)
+    resolutionStrategy {
+        // CI must see a release the moment it is published; local builds keep Gradle's 24 h cache.
+        if (System.getenv("CI") != null) cacheDynamicVersionsFor(0, TimeUnit.SECONDS)
+        // Maven counts every non-SNAPSHOT version as a release; customers don't run pre-releases.
+        componentSelection {
+            all {
+                if (candidate.group == "xyz.tesser" && candidate.version.contains('-')) reject("pre-release")
+            }
+        }
+    }
 }
 
 // Builds with whichever JDK runs Gradle; the output runs on Java 17+, like the SDK.

@@ -52,6 +52,7 @@ export async function runKotlinSigner<C extends keyof SignerInputs>(command: C, 
     signer.exited,
   ]);
   if (exitCode !== 0) throw new Error(`The Kotlin signer failed: ${error.trim()}`);
+  if (!signature.trim()) throw new Error("The Kotlin signer exited without printing a signature");
   return signature.trim();
 }
 

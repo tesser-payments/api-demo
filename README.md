@@ -165,8 +165,8 @@ The managed wallet test creates a wallet named `E2E outbound <run id>` on every 
 This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) runs these jobs against staging:
 
 - `checks`: typecheck and unit tests.
-- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test, so a broken SDK release fails only that job.
-- `report`: when any job failed, one Slack message with a section per failed job and its reason.
+- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test. A broken SDK release fails only this job, but then none of its inbound or outbound cases run.
+- `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
 A full run takes about 6 minutes, most of it the managed wallet test.
 

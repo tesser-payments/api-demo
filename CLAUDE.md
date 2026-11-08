@@ -68,7 +68,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`) and `managed-wallet` (Kotlin signer build and tests, then the managed wallet E2E, so a broken SDK release fails only that job), then `report` (one Slack message for every failed job, from `.github/scripts/`). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
+| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`) and `managed-wallet` (Kotlin signer build and tests, then the managed wallet E2E; a broken SDK release fails only this job, but then no inbound or outbound case runs), then `report` (one Slack message for every failed job, from the redacted reason artifacts each failed job saves with `.github/scripts/`; job outputs can't carry them because GitHub drops outputs containing a secret's value). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
