@@ -62,13 +62,9 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `BENEFICIARY_WALLET_ADDRESS` | No | Payout address. It must match `PAYMENT_NETWORK`. Defaults to a known-good address for the network (see [Payout networks](#payout-networks)) |
 | `ENABLE_VARIANTS` | No | `A`, `B`, or `BOTH` (default: `BOTH`) |
 | `DEBUG_MODE` | No | Set to `true` to log all request and response payloads. They include secrets such as the Circle key, the access token and a managed wallet's Turnkey signature, so don't share the output |
-| `INBOUND_NETWORK` | No | Network the inbound E2E simulates on: `POLYGON_AMOY` (default, finalizes within seconds), `BASE_SEPOLIA`, `ETHEREUM_SEPOLIA` or `TEMPO_MODERATO` |
-| `TURNKEY_API_PUBLIC_KEY` | No | With the two below, lets the inbound E2E create its managed wallets when they're missing. A Turnkey API key on the workspace's sub-organization; restrict it with a Turnkey policy to creating wallets |
-| `TURNKEY_API_PRIVATE_KEY` | No | Private half of that API key |
-| `TURNKEY_ORGANIZATION_ID` | No | The workspace's Turnkey sub-organization ID |
-| `SIGNING_PUBLIC_KEY` | For the outbound E2E | With the two below, the Turnkey signing key the outbound E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
-| `SIGNING_PRIVATE_KEY` | For the outbound E2E | Private half of that API key |
-| `SIGNING_ENCLAVE_ID` | For the outbound E2E | The workspace's Turnkey sub-organization ID |
+| `SIGNING_PUBLIC_KEY` | For the managed wallet E2E | With the two below, the Turnkey signing key the managed wallet E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
+| `SIGNING_PRIVATE_KEY` | For the managed wallet E2E | Private half of that signing key |
+| `SIGNING_ENCLAVE_ID` | For the managed wallet E2E | The workspace's Turnkey sub-organization ID |
 | `TESSER_FROM_ACCOUNT_ID` | No | Source account for the helper scripts |
 | `TESSER_TO_ACCOUNT_ID` | No | Destination account for `tesser-payment-test.ts` |
 | `TESSER_REBALANCE_ID` | No | Rebalance to fetch with `get-rebalance.ts` |
@@ -147,7 +143,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 ## Development
 
 ```bash
-bun run build:signer  # builds the Kotlin signer the outbound E2E uses (needs a JDK 17–23)
+bun run build:signer  # builds the Kotlin signer the managed wallet E2E uses (needs a JDK 17–23)
 bun test              # unit tests; the signer's tests run once it is built
 bun run e2e           # E2E tests in e2e/ against sandbox, with .env.local
 bunx tsc --noEmit     # typecheck
@@ -158,25 +154,28 @@ The E2E tests in `e2e/`:
 | Test | What it covers |
 |------|----------------|
 | `payments/circle-ledger-to-wallet` | A USD wire into a Circle ledger, paid out as USDC to an unmanaged wallet, at org and tenant level |
-| `payments/inbound-to-managed-wallet` | 1 USDC sent to a managed wallet with `POST /v1/payments/simulate-inbound`, once automatically approved and once held for review and approved. Checks the wallet is credited exactly 1 USDC and the payment completes |
-| `payments/outbound-from-managed-wallet` | A new managed wallet created with the latest published Tesser Kotlin SDK, credited exactly 1 USDC by `simulate-inbound` (so the platform watches the new address), then 0.1 USDC paid on Polygon Amoy from it to an unmanaged wallet twice: once to an automatically approved beneficiary and once to one held for review and approved. Each step is signed with the Kotlin SDK as the "Sign a Wallet Step" guide describes, and the wallet must be debited exactly 0.1 USDC each time. A release of the SDK that breaks creating or signing fails it |
+| `payments/managed-wallet` | On Polygon Amoy, a new managed wallet created with the latest published Tesser Kotlin SDK receives 1 USDC twice with `POST /v1/payments/simulate-inbound` (once automatically approved, once held for review and approved; detected only if the platform watches the new address), then pays 0.1 USDC twice to an unmanaged wallet (once to an automatically approved beneficiary, once to one held for review and approved), each step signed with the Kotlin SDK as the "Sign a Wallet Step" guide describes. Checks the balance moves by exactly that amount each time and the payments complete. A release of the SDK that breaks creating or signing fails it |
 
-The inbound test receives into two managed wallets of the workspace, `E2E inbound, auto-approved` and `E2E inbound, manual review`, used by nothing else so their balances only move by the test's own inbound. It creates them when the `TURNKEY_*` variables are set; otherwise create them once in the dashboard.
-
-The outbound test creates a wallet named `E2E outbound <run id>` on every run, so its signing key can create and sign for any wallet in the workspace. The originator (`E2E outbound originator`, whose bank account is the payment's `funding_account_id`) and the beneficiary wallets at the documented risk-test addresses are created on first use and reused.
+The managed wallet test creates a wallet named `E2E outbound <run id>` on every run, so its signing key can create and sign for any wallet in the workspace; 1.8 USDC stays in it afterwards. The originator (`E2E outbound originator`, whose bank account is the payment's `funding_account_id`) and the beneficiary wallets at the documented risk-test addresses are created on first use and reused.
 
 ---
 
 ## CI / E2E testing
 
-This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) typechecks, runs the unit tests, `index.ts` and the inbound E2E test, then builds and tests the Kotlin signer and runs the outbound E2E test, all against staging. The Kotlin steps come last, so a broken SDK release fails only the outbound test.
+This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) runs these jobs against staging:
+
+- `checks`: typecheck and unit tests.
+- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test, so a broken SDK release fails only that job.
+- `report`: when any job failed, one Slack message with a section per failed job and its reason.
+
+A full run takes about 6 minutes, most of it the managed wallet test.
 
 **Triggers:**
 
 - `repository_dispatch` (`platform-deploy`): fired by `tesser-payments/platform` after its backend deploy from `main` succeeds.
 - `workflow_dispatch`: manual trigger from the GitHub Actions tab.
 - `push` to `main`: every push that updates `main`, merges and direct pushes alike.
-- `pull_request`: typecheck, unit tests and the signer's build and tests only; the live E2E and the Slack alert are skipped.
+- `pull_request`: `checks` and the signer's build and tests only; the live E2E and the Slack alert are skipped.
 
 The E2E runs against staging, which the platform deploys from `main`, so a run fired by a platform merge tests the code that was just merged.
 
@@ -188,7 +187,7 @@ The E2E runs against staging, which the platform deploys from `main`, so a run f
 | `STAGING_TESSER_CLIENT_SECRET` | Tesser staging API client secret |
 | `STAGING_TESSER_BASE_URL` | Tesser staging base URL |
 | `STAGING_TESSER_AUTH_URL` | Staging auth token endpoint URL |
-| `STAGING_SIGNING_PUBLIC_KEY` | The outbound E2E's signing key: the one the dashboard shows when you create an API key in the staging workspace |
+| `STAGING_SIGNING_PUBLIC_KEY` | The managed wallet E2E's signing key: the one the dashboard shows when you create an API key in the staging workspace |
 | `STAGING_SIGNING_PRIVATE_KEY` | Private half of that signing key |
 | `STAGING_SIGNING_ENCLAVE_ID` | The staging workspace's Turnkey sub-organization ID (the signing key's enclave ID) |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |

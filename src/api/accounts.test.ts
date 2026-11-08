@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
-import { assertBalanceHolds, findCounterpartyAccount, findManagedEvmWallet, waitForBalance } from "./accounts.ts";
+import { assertBalanceHolds, findCounterpartyAccount, waitForBalance } from "./accounts.ts";
 
 let fetchSpy: ReturnType<typeof spyOn>;
 
@@ -31,27 +31,6 @@ beforeEach(() => {
   fetchSpy = spyOn(globalThis, "fetch");
 });
 afterEach(() => fetchSpy.mockRestore());
-
-describe("findManagedEvmWallet", () => {
-  test("matches the workspace's wallet by exact name", async () => {
-    await serve([
-      wallet("a", "E2E inbound, auto-approved (old)"),
-      wallet("b", "E2E inbound, auto-approved", { tenant_id: "t1" }),
-      wallet("c", "E2E inbound, auto-approved"),
-    ]);
-    expect((await findManagedEvmWallet("E2E inbound, auto-approved"))?.id).toBe("c");
-  });
-
-  test("returns undefined when none matches", async () => {
-    await serve([wallet("a", "Treasury")]);
-    expect(await findManagedEvmWallet("E2E inbound, auto-approved")).toBeUndefined();
-  });
-
-  test("throws when several share the name", async () => {
-    await serve([wallet("a", "E2E inbound, auto-approved"), wallet("b", "E2E inbound, auto-approved")]);
-    await expect(findManagedEvmWallet("E2E inbound, auto-approved")).rejects.toThrow("2 managed wallets");
-  });
-});
 
 describe("findCounterpartyAccount", () => {
   const query = { type: "fiat_bank", name: "E2E outbound originator" } as const;

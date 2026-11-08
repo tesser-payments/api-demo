@@ -1,7 +1,9 @@
 import { getAll, post } from "../client.ts";
-import type { InboundNetwork } from "../inbound.ts";
 import { poll, postWithRetry } from "../retry.ts";
 import type { Envelope, MockedRiskStatus, Payment, SimulatedInboundPending } from "../types.ts";
+
+/** Networks `POST /v1/payments/simulate-inbound` sends on. */
+export type InboundNetwork = "POLYGON_AMOY" | "BASE_SEPOLIA" | "ETHEREUM_SEPOLIA" | "TEMPO_MODERATO";
 
 /**
  * A same-currency payout from one account to another. `fundingAccountId` is the

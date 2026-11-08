@@ -52,12 +52,13 @@ export async function createCounterpartyBank({ counterpartyId, name }: { counter
 
 /** A counterparty's account of `type` named exactly `name`; throws if several share it. */
 export async function findCounterpartyAccount({ type, name }: { type: AccountType; name: string }): Promise<Account | undefined> {
-  return findOnlyAccountNamed({
-    name,
-    filters: `type=${type}`,
-    kind: "counterparty accounts",
-    isOwner: (a) => !!a.counterparty_id,
-  });
+  // `search` matches part of the name, so the exact match is filtered here.
+  const candidates = await getAll<Account>(`/v1/accounts?type=${type}&search=${encodeURIComponent(name)}`);
+  const matches = candidates.filter((a) => a.name === name && a.counterparty_id);
+  if (matches.length > 1) {
+    throw new Error(`${matches.length} counterparty accounts are named "${name}"; delete the extras so exactly one remains`);
+  }
+  return matches[0];
 }
 
 export async function createCircleLedger({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
@@ -90,36 +91,6 @@ export async function createUnmanagedWallet({
     counterparty_id: counterpartyId,
   });
   return wallet.data.id;
-}
-
-/** The workspace's own managed EVM wallet named exactly `name`; throws if several share it. */
-export async function findManagedEvmWallet(name: string): Promise<Account | undefined> {
-  return findOnlyAccountNamed({
-    name,
-    filters: "type=stablecoin_ethereum&is_managed=true",
-    kind: "managed wallets",
-    isOwner: (a) => !a.tenant_id && !a.counterparty_id,
-  });
-}
-
-// `search` matches part of the name, so the exact match is filtered here.
-async function findOnlyAccountNamed({
-  name,
-  filters,
-  kind,
-  isOwner,
-}: {
-  name: string;
-  filters: string;
-  kind: string;
-  isOwner: (account: Account) => boolean;
-}): Promise<Account | undefined> {
-  const candidates = await getAll<Account>(`/v1/accounts?${filters}&search=${encodeURIComponent(name)}`);
-  const matches = candidates.filter((a) => a.name === name && isOwner(a));
-  if (matches.length > 1) {
-    throw new Error(`${matches.length} ${kind} are named "${name}"; delete the extras so exactly one remains`);
-  }
-  return matches[0];
 }
 
 /**

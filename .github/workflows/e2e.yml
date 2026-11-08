@@ -6,8 +6,12 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  # Pull requests only get the typecheck, the unit tests and the signer build; the live E2E is skipped.
+  # Pull requests only get the checks and the signer build; the live E2E is skipped.
   pull_request:
+
+# The managed wallet job holds the staging signing key, so the token can only read the repo.
+permissions:
+  contents: read
 
 # Live runs share the same wallets, so they queue instead of overlapping.
 # Pull requests get their own group so they never displace a queued live run.
@@ -17,25 +21,42 @@ concurrency:
   # Keeps every waiting run; by default a new run replaces the one waiting.
   queue: max
 
+# checks, then circle and managed-wallet in parallel, then one Slack message for every failed job.
 jobs:
-  e2e:
+  checks:
     runs-on: ubuntu-latest
+    outputs:
+      reason: ${{ steps.reason.outputs.text }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
+      # An explicit bash shell turns on pipefail, so a step still fails through tee.
       - name: Typecheck
-        run: bunx tsc --noEmit
+        shell: bash
+        run: bunx tsc --noEmit 2>&1 | tee -a e2e.log
       - name: Unit tests
-        id: unit
-        run: bun test
+        shell: bash
+        run: bun test 2>&1 | tee -a e2e.log
+      - name: Extract the failure reason
+        id: reason
+        if: failure() && github.event_name != 'pull_request'
+        run: .github/scripts/failure-reason.sh e2e.log >> "$GITHUB_OUTPUT"
+
+  circle:
+    needs: checks
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      reason: ${{ steps.reason.outputs.text }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
       - name: Run Circle payout E2E
-        id: demo
-        if: github.event_name != 'pull_request'
         # Covers the ledger compliance wait, which can take up to 35 min when
         # Circle is slow to accept. A typical run takes about 3 min.
         timeout-minutes: 50
-        # An explicit bash shell turns on pipefail, so the step still fails through tee.
         shell: bash
         run: bun run index.ts 2>&1 | tee e2e.log
         env:
@@ -49,47 +70,51 @@ jobs:
           ENABLE_VARIANTS: ${{ secrets.ENABLE_VARIANTS }}
           DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
           CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
-      - name: Run inbound E2E
-        # Also runs when the payout flow failed, so one failure doesn't hide the other.
-        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' }}
-        timeout-minutes: 35
-        shell: bash
-        run: bun test --timeout 300000 ./e2e/payments/inbound-to-managed-wallet.test.ts 2>&1 | tee -a e2e.log
+      - name: Extract the failure reason
+        id: reason
+        if: failure()
+        run: >-
+          .github/scripts/failure-reason.sh e2e.log
+          TESSER_CLIENT_ID TESSER_CLIENT_SECRET CIRCLE_API_KEY BENEFICIARY_WALLET_ADDRESS >> "$GITHUB_OUTPUT"
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
-          TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
-          TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
-      # The Kotlin steps come last: a broken SDK release fails only the outbound E2E.
-      - uses: actions/setup-java@v4
-        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
+
+  managed-wallet:
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      reason: ${{ steps.reason.outputs.text }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
       # Pull requests run the committed gradle-wrapper.jar, so check it is Gradle's.
-      - uses: gradle/actions/wrapper-validation@v6
-        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - name: Build and test the Kotlin signer
-        id: signer
-        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         working-directory: signers/kotlin
         shell: bash
         run: |
           ./gradlew --no-daemon --quiet test installDist 2>&1 | tee -a ../../e2e.log
           echo "Signing with the latest Kotlin SDK: $(ls build/install/tesser-signer/lib | grep -E '^sdk-[0-9]')"
       - name: Unit tests that run the Kotlin signer
-        if: ${{ !cancelled() && steps.signer.outcome == 'success' }}
         shell: bash
         run: bun test src/setup/kotlin-signer.test.ts 2>&1 | tee -a e2e.log
         env:
           REQUIRE_KOTLIN_SIGNER: "1"
-      - name: Run outbound E2E
-        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' && steps.signer.outcome == 'success' }}
-        # Above its tests' timeouts (12 + 2 × 11 min), so a slow run still prints its failure.
-        timeout-minutes: 40
+      - name: Run managed wallet E2E
+        if: github.event_name != 'pull_request'
+        # Above its tests' timeouts (2 + 2 × 12 + 2 × 11 min), so a slow run still prints its failure.
+        timeout-minutes: 50
         shell: bash
-        run: bun test --timeout 300000 ./e2e/payments/outbound-from-managed-wallet.test.ts 2>&1 | tee -a e2e.log
+        run: bun test --timeout 300000 ./e2e/payments/managed-wallet.test.ts 2>&1 | tee -a e2e.log
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
@@ -101,58 +126,37 @@ jobs:
       - name: Extract the failure reason
         id: reason
         if: failure() && github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          if [ -f e2e.log ]; then
-            log=$(sed -E 's/\x1b\[[0-9;]*m//g' e2e.log)
-            reason=$(grep -E -A8 'Demo failed:|\(fail\)|^error:|^e: |^FAILURE:' <<<"$log" | head -30 || true)
-            [ -n "$reason" ] || reason=$(tail -15 <<<"$log")
-          else
-            reason="Failed before the E2E ran (install, typecheck or unit tests)."
-          fi
-          # Slack doesn't mask secrets the way the Actions log does.
-          for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS" "$SIGNING_PRIVATE_KEY"; do
-            if [ -n "$secret" ]; then reason=${reason//"$secret"/<redacted>}; fi
-          done
-          text=$(printf '*Reason:*\n```\n%s\n```' "${reason:0:2500}")
-          echo "json=$(jq -cn --arg text "$text" '$text')" >> "$GITHUB_OUTPUT"
+        run: >-
+          .github/scripts/failure-reason.sh e2e.log
+          TESSER_CLIENT_ID TESSER_CLIENT_SECRET SIGNING_PRIVATE_KEY >> "$GITHUB_OUTPUT"
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
-          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
-          BENEFICIARY_WALLET_ADDRESS: ${{ secrets.BENEFICIARY_WALLET_ADDRESS }}
           SIGNING_PRIVATE_KEY: ${{ secrets.STAGING_SIGNING_PRIVATE_KEY }}
-      - name: Notify Slack on failure
-        if: failure() && github.event_name != 'pull_request'
-        uses: slackapi/slack-github-action@v2
+
+  report:
+    needs: [checks, circle, managed-wallet]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the Slack message
+        id: message
+        run: .github/scripts/slack-failure-payload.sh >> "$GITHUB_OUTPUT"
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TRIGGER: ${{ github.event_name }}
+          COMMIT: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          CHECKS_REASON: ${{ needs.checks.outputs.reason }}
+          CIRCLE_RESULT: ${{ needs.circle.result }}
+          CIRCLE_REASON: ${{ needs.circle.outputs.reason }}
+          MANAGED_WALLET_RESULT: ${{ needs.managed-wallet.result }}
+          MANAGED_WALLET_REASON: ${{ needs.managed-wallet.outputs.reason }}
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":red_circle: *E2E Tests failed*"
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
-                    { "type": "mrkdwn", "text": "*Trigger:*\n${{ github.event_name }}" },
-                    { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
-                    { "type": "mrkdwn", "text": "*Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>" }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ${{ steps.reason.outputs.json || '"*Reason:* not captured, see the logs"' }}
-                  }
-                }
-              ]
-            }
+          payload: ${{ steps.message.outputs.payload }}

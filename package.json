@@ -18,7 +18,6 @@
     "@faker-js/faker": "^10.3.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tesser-payments/types": "^0.0.2",
-    "@turnkey/api-key-stamper": "^0.6.19",
     "p-retry": "^7.1.1",
     "picocolors": "^1.1.1"
   }
