@@ -2,6 +2,8 @@
 
 Integration reference for the [Tesser](https://tesser.xyz) stablecoin payments API. Run this demo against the sandbox to see a complete payment flow end-to-end: a USD wire is minted into USDC through Circle Mint, and the USDC is paid out to a wallet on Stellar (default) or an EVM testnet.
 
+The repo also holds the E2E tests that run after every platform deploy; [e2e/README.md](e2e/README.md) lists what each one checks.
+
 ## What this demo does
 
 1. **Authenticate**: obtain an OAuth2 access token via client credentials.
@@ -61,7 +63,7 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `PAYMENT_NETWORK` | No | Payout network: `STELLAR` (default) or an EVM testnet such as `ETHEREUM_SEPOLIA`. Solana isn't supported here |
 | `BENEFICIARY_WALLET_ADDRESS` | No | Payout address. It must match `PAYMENT_NETWORK`. Defaults to a known-good address for the network (see [Payout networks](#payout-networks)) |
 | `ENABLE_VARIANTS` | No | `A`, `B`, or `BOTH` (default: `BOTH`) |
-| `DEBUG_MODE` | No | Set to `true` to log all request and response payloads. They include secrets such as the Circle key, the access token and a managed wallet's Turnkey signature, so don't share the output |
+| `DEBUG_MODE` | No | Set to `true` to log all request and response payloads. They include secrets such as the Circle key, the access token and the signatures that create a managed wallet or sign a step, so don't share the output |
 | `SIGNING_PUBLIC_KEY` | For the managed wallet E2E | With the two below, the Turnkey signing key the managed wallet E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
 | `SIGNING_PRIVATE_KEY` | For the managed wallet E2E | Private half of that signing key |
 | `SIGNING_ENCLAVE_ID` | For the managed wallet E2E | The workspace's Turnkey sub-organization ID |
@@ -103,7 +105,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 
 | Script | Description |
 |--------|-------------|
-| `bun run index.ts` | Full E2E flow |
+| `bun run index.ts` | The demo flow above |
 | `bun run scripts/get-accounts.ts` | List all accounts with pagination debug output |
 | `bun run scripts/get-account.ts` | Get the account `TESSER_FROM_ACCOUNT_ID` |
 | `bun run scripts/get-currencies-networks.ts` | List currencies and networks, with request and response details |
@@ -117,7 +119,7 @@ On EVM networks, these sandbox addresses always get the same risk decision, so y
 
 ## How it works
 
-**Payment statuses.** A payment is done when every step is `completed`. Steps move through `created`, `submitted` and `confirmed`, and end in `completed` or `failed`. The risk status starts at `unchecked` and becomes `automatically_approved`, `awaiting_decision` (then `manually_approved` or `manually_rejected`), or `automatically_rejected`. The E2E approves a payment held for review, and fails on a rejection or a failed step.
+**Payment statuses.** A payment is done when every step is `completed`. Steps move through `created`, `submitted` and `confirmed`, and end in `completed` or `failed`. A step that moves funds out of a managed wallet also passes through `signature_requested` and `signed`: you sign its `unsigned_transaction` with the Tesser SDK and send the signature to the step's sign endpoint. The risk status starts at `unchecked` and becomes `automatically_approved`, `awaiting_decision` (then `manually_approved` or `manually_rejected`), or `automatically_rejected`. The E2E approves a payment held for review, and fails on a rejection or a failed step.
 
 **Async steps.** Several steps finish in the background, so the demo waits for each one with its own time limit and says what it was waiting for if the limit is reached:
 
@@ -149,14 +151,10 @@ bun run e2e           # E2E tests in e2e/ against sandbox, with .env.local
 bunx tsc --noEmit     # typecheck
 ```
 
-The E2E tests in `e2e/`:
+The E2E tests in `e2e/`, case by case, with what each checks and what's deliberately not covered: [e2e/README.md](e2e/README.md).
 
-| Test | What it covers |
-|------|----------------|
-| `payments/circle-ledger-to-wallet` | A USD wire into a Circle ledger, paid out as USDC to an unmanaged wallet, at org and tenant level |
-| `payments/managed-wallet` | On Polygon Amoy, a new managed wallet created with the latest published Tesser Kotlin SDK receives 1 USDC twice with `POST /v1/payments/simulate-inbound` (once automatically approved, once held for review and approved; detected only if the platform watches the new address), then pays 0.1 USDC twice to an unmanaged wallet (once to an automatically approved beneficiary, once to one held for review and approved), each step signed with the Kotlin SDK as the "Sign a Wallet Step" guide describes. Checks the balance moves by exactly that amount each time and the payments complete. A release of the SDK that breaks creating or signing fails it |
-
-The managed wallet test creates a wallet named `E2E outbound <run id>` on every run, so its signing key can create and sign for any wallet in the workspace; 1.8 USDC stays in it afterwards. The originator (`E2E outbound originator`, whose bank account is the payment's `funding_account_id`) and the beneficiary wallets at the documented risk-test addresses are created on first use and reused.
+- `payments/circle-ledger-to-wallet`: a USD wire into a Circle ledger, paid out as USDC to an unmanaged wallet, at org and tenant level.
+- `payments/managed-wallet`: a managed wallet created with the latest Tesser Kotlin SDK receives two inbounds and makes two payouts, each step signed with the SDK. It creates a new wallet on every run, so its signing key can create and sign for any wallet in the workspace.
 
 ---
 
@@ -168,7 +166,7 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 - `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test. A broken SDK release fails only this job, but then none of its inbound or outbound cases run.
 - `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
-A full run takes about 6 minutes, most of it the managed wallet test.
+A full run should take about 6 minutes, most of it the managed wallet job.
 
 **Triggers:**
 

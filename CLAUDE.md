@@ -61,7 +61,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | `signers/kotlin/` | `tesser-signer <sign-step\|create-wallet>`: a Gradle CLI around the latest published Tesser Kotlin SDK (`xyz.tesser:sdk:latest.release`), the SDK customers run, so a release that breaks creating or signing fails the E2E. Request JSON on stdin, `signature` on stdout, key from `SIGNING_*`. `create-wallet` fetches the creation body from `TESSER_BASE_URL` (`GET /v1/accounts/wallets/unsigned-payload`, from SDK 0.1.0) and stamps it unchanged. `bun run build:signer` installs it; its tests run with `./gradlew test` |
 | `src/testing/` | Helpers only tests use, e.g. a throwaway Turnkey API key |
 | `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
-| `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`) |
+| `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`). `e2e/README.md` describes every case in plain words |
 | `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
 | `src/retry.ts` | `isTransient`, `retryOpts`, `postWithRetry`, `poll` (defaults: 60 attempts, 10 s apart) |
 | `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment` |
@@ -122,6 +122,7 @@ Each run creates new counterparties, ledgers and wallets in the sandbox workspac
 
 - **A new API action:** add it to the matching resource file in `src/api/`, built from the helpers above, so the demo and the E2E tests share it.
 - **A new E2E flow:** add `e2e/<endpoint>/<provider path>.test.ts`, happy path only, using only `src/` (the public API).
+- **Any E2E change:** update `e2e/README.md` in the same pull request: each case's title, what it does, what it checks, and the "Not covered" list. The repo is public, so it names no customers, internal ids or private URLs.
 - **A new demo step:** add a `stepN_…` function in `index.ts` that calls `src/api/`, and call it from `runSteps4Through7` (or `main` for one-off setup).
 - **A new payout network:** add its wallet type, default address and address format to `payoutConfig`, update `.env.example` and the README, and verify a live run before making it a default.
 - **A new script:** put it in `scripts/`, import from `../src/`, and list it in the README.
