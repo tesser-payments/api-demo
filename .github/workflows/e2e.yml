@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  # Pull requests only get the typecheck and unit tests; the live E2E is skipped.
+  # Pull requests only get the typecheck, the signer build and the unit tests; the live E2E is skipped.
   pull_request:
 
 # Live runs share the same wallets, so they queue instead of overlapping.
@@ -26,6 +26,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bunx tsc --noEmit
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      # Pull requests run the committed gradle-wrapper.jar, so check it is Gradle's.
+      - uses: gradle/actions/wrapper-validation@v6
+      # Before the unit tests, which run the signer for real.
+      - name: Build and test the Kotlin signer
+        working-directory: signers/kotlin
+        run: ./gradlew --no-daemon --quiet test installDist
       - name: Unit tests
         run: bun test
       - name: Run Circle payout E2E
@@ -69,7 +80,7 @@ jobs:
             reason=$(grep -E -A8 'Demo failed:|\(fail\)|^error:' <<<"$log" | head -30 || true)
             [ -n "$reason" ] || reason=$(tail -15 <<<"$log")
           else
-            reason="Failed before the E2E ran (install, typecheck or unit tests)."
+            reason="Failed before the E2E ran (install, typecheck, signer build or unit tests)."
           fi
           # Slack doesn't mask secrets the way the Actions log does.
           for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS"; do

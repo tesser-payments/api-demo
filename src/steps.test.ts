@@ -37,14 +37,25 @@ const payment = (risk_status: RiskStatus, steps: Step[]): Payment => ({
 let logSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
 const reviews: { body: unknown; key: string | undefined }[] = [];
+const signs: { path: string; body: unknown; key: string | undefined }[] = [];
+// Statuses the sign endpoint answers, in order; 200 once they run out.
+const signStatuses: number[] = [];
 
-// Auth, then each GET returns the next payment state; review POSTs are recorded.
+// Auth, then each GET returns the next payment state; review and sign POSTs are recorded.
 async function serve(...states: Payment[]) {
   fetchSpy.mockImplementation(async (url: unknown, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     if (!headers.Authorization) return Response.json({ access_token: "t" });
     if (String(url).endsWith("/review")) {
       reviews.push({ body: JSON.parse(String(init?.body)), key: headers["Idempotency-Key"] });
+      return Response.json({ data: {} });
+    }
+    if (String(url).endsWith("/sign")) {
+      signs.push({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body)), key: headers["Idempotency-Key"] });
+      const status = signStatuses.shift() ?? 200;
+      if (status !== 200) {
+        return Response.json({ errors: [{ error_code: "payments-0000", error_message: "refused" }] }, { status });
+      }
       return Response.json({ data: {} });
     }
     const next = states.length > 1 ? states.shift() : states[0];
@@ -55,6 +66,8 @@ async function serve(...states: Payment[]) {
 
 beforeEach(() => {
   reviews.length = 0;
+  signs.length = 0;
+  signStatuses.length = 0;
   process.env.TESSER_CLIENT_ID ||= "test";
   process.env.TESSER_CLIENT_SECRET ||= "test";
   logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -130,5 +143,75 @@ describe("waitForPayment", () => {
       ]),
     );
     await expect(waitForPayment("p1", fast)).rejects.toThrow("payments-5001: boom");
+  });
+});
+
+describe("waitForPayment signing", () => {
+  const awaitingSignature = () =>
+    payment("automatically_approved", [step("signature_requested", { unsigned_transaction: "0x02aa" })]);
+
+  test("signs a step that asks for a signature once, at that step's sign endpoint", async () => {
+    // The second state still asks for a signature, as a GET can lag the sign request.
+    await serve(awaitingSignature(), awaitingSignature(), payment("automatically_approved", [step("completed")]));
+    const sign = mock(async () => "signature-1");
+
+    await waitForPayment("p1", { ...fast, sign });
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    const [signedStep, signedPayment] = sign.mock.calls[0] as unknown as [Step, Payment];
+    expect(signedStep.unsigned_transaction).toBe("0x02aa");
+    expect(signedPayment.id).toBe("p1");
+    expect(signs).toEqual([
+      { path: "/v1/payments/p1/steps/s1/sign", body: { signature: "signature-1" }, key: expect.any(String) },
+    ]);
+  });
+
+  test("waits to sign until the step carries its unsigned transaction", async () => {
+    await serve(
+      payment("automatically_approved", [step("signature_requested")]),
+      awaitingSignature(),
+      payment("automatically_approved", [step("completed")]),
+    );
+    const sign = mock(async (s: Step) => `signature-for-${s.unsigned_transaction}`);
+
+    await waitForPayment("p1", { ...fast, sign });
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(signs.map((s) => s.body)).toEqual([{ signature: "signature-for-0x02aa" }]);
+  });
+
+  test("signs again when the step asks for a signature on a new transaction", async () => {
+    const awaitingNewTransaction = payment("automatically_approved", [
+      step("signature_requested", { unsigned_transaction: "0x02bb" }),
+    ]);
+    await serve(awaitingSignature(), awaitingNewTransaction, payment("automatically_approved", [step("completed")]));
+    const sign = mock(async (s: Step) => `signature-for-${s.unsigned_transaction}`);
+
+    await waitForPayment("p1", { ...fast, sign });
+
+    expect(signs.map((s) => s.body)).toEqual([{ signature: "signature-for-0x02aa" }, { signature: "signature-for-0x02bb" }]);
+    expect(signs[0]!.key).not.toBe(signs[1]!.key);
+  });
+
+  test("retries a failed sign request with the same signature and Idempotency-Key", async () => {
+    signStatuses.push(503);
+    await serve(awaitingSignature(), awaitingSignature(), payment("automatically_approved", [step("completed")]));
+    const sign = mock(async () => "signature-1");
+
+    await waitForPayment("p1", { ...fast, sign });
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(signs).toHaveLength(2);
+    expect(signs[1]).toEqual(signs[0]!);
+  });
+
+  test("keeps the signature out of the error when the sign request is refused", async () => {
+    signStatuses.push(400);
+    await serve(awaitingSignature());
+
+    const error = (await waitForPayment("p1", { ...fast, sign: async () => "signature-secret" }).catch((e) => e)) as Error;
+
+    expect(error.message).toContain("/v1/payments/p1/steps/s1/sign failed (400)");
+    expect(error.message).not.toContain("signature-secret");
   });
 });

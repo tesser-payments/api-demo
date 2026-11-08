@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "demo": "bun run index.ts",
+    "build:signer": "cd signers/kotlin && ./gradlew --quiet installDist",
     "e2e": "bun test --timeout 300000 --env-file=.env.local ./e2e"
   },
   "devDependencies": {

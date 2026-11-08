@@ -83,6 +83,8 @@ export interface Step {
   status: StepStatus;
   status_reasons?: StatusReason[] | null;
   transaction_hash?: string | null;
+  /** Set while the step is `signature_requested`: the transaction for the source wallet to sign. */
+  unsigned_transaction?: string | null;
   created_at: string;
   updated_at: string;
   submitted_at?: string | null;

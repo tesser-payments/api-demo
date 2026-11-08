@@ -27,6 +27,8 @@ export interface WaitForPaymentOptions {
   decide?: (payment: Payment) => Promise<boolean>;
   /** Recorded with the review decision. */
   reason?: string;
+  /** Called once per transaction a step asks to sign; resolve to its `signature`. Without it, someone else must sign. */
+  sign?: (step: Step, payment: Payment) => Promise<string>;
   timeoutMs?: number;
   intervalMs?: number;
 }
@@ -37,11 +39,14 @@ export interface WaitForPaymentOptions {
  */
 export async function waitForPayment(
   paymentId: string,
-  { decide, reason, timeoutMs = 10 * 60_000, intervalMs }: WaitForPaymentOptions = {},
+  { decide, reason, sign, timeoutMs = 10 * 60_000, intervalMs }: WaitForPaymentOptions = {},
 ): Promise<Payment> {
   const reviewKey = crypto.randomUUID();
   let decision: boolean | undefined;
   let reviewed = false;
+  // Keyed by step and transaction: a retry resends the same signature and key, a new transaction is signed anew.
+  const signRequests = new Map<string, SignRequest>();
+  const submittedSignatures = new Set<string>();
   let last = "";
 
   return poll(
@@ -71,6 +76,21 @@ export async function waitForPayment(
       }
 
       assertNoFailedStep("Payment", payment.steps);
+
+      for (const step of payment.steps) {
+        if (!sign || step.status !== "signature_requested" || !step.unsigned_transaction) continue;
+        const transactionKey = `${step.id}:${step.unsigned_transaction}`;
+        if (submittedSignatures.has(transactionKey)) continue;
+        const request = signRequests.get(transactionKey) ?? {
+          signature: await sign(step, payment),
+          idempotencyKey: crypto.randomUUID(),
+        };
+        signRequests.set(transactionKey, request);
+        await submitSignature({ paymentId, stepId: step.id, ...request });
+        submittedSignatures.add(transactionKey);
+        console.log(pc.dim(`  Signed step ${step.step_sequence}`));
+      }
+
       const done = payment.steps.length > 0 && payment.steps.every((s) => s.status === "completed");
       return done ? payment : undefined;
     },
@@ -80,4 +100,24 @@ export async function waitForPayment(
       timeoutHint: decide ? undefined : "If risk is awaiting_decision, approve or reject the payment",
     },
   );
+}
+
+interface SignRequest {
+  signature: string;
+  idempotencyKey: string;
+}
+
+async function submitSignature({
+  paymentId,
+  stepId,
+  signature,
+  idempotencyKey,
+}: { paymentId: string; stepId: string } & SignRequest): Promise<void> {
+  try {
+    await post(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
+  } catch (error) {
+    // The request body is in the error message; a signature authorizes moving the wallet's funds.
+    if (error instanceof Error) error.message = error.message.replaceAll(signature, "<redacted>");
+    throw error;
+  }
 }
