@@ -215,6 +215,7 @@ async function step6_createPayment(
   reference: string,
 ): Promise<string> {
   return createPayment({
+    fundingAccountId: ledgerAccountId,
     fromAccountId: ledgerAccountId,
     toAccountId: walletAccountId,
     amount,

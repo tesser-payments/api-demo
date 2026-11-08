@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
-import { simulateInbound } from "./payments.ts";
+import { createPayment, simulateInbound } from "./payments.ts";
 
 let logSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
@@ -56,5 +56,40 @@ describe("simulateInbound", () => {
     );
     expect(await simulateInbound(request)).toBe("p3");
     expect(listed[0]).toContain("/v1/payments?direction=inbound&start_date=");
+  });
+});
+
+describe("createPayment", () => {
+  test("funds the payment from the originator's account, separate from the source", async () => {
+    const created: unknown[] = [];
+    fetchSpy.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (!headers.Authorization) return Response.json({ access_token: "t" });
+      created.push(JSON.parse(String(init?.body)));
+      return Response.json({ data: { id: "p1" } }, { status: 201 });
+    });
+    await authenticate();
+
+    const paymentId = await createPayment({
+      fundingAccountId: "originator-bank",
+      fromAccountId: "source-wallet",
+      toAccountId: "beneficiary-wallet",
+      amount: "0.1",
+      currency: "USDC",
+      network: "POLYGON_AMOY",
+      reference: "ref-1",
+    });
+
+    expect(paymentId).toBe("p1");
+    expect(created).toEqual([
+      {
+        organization_reference_id: "ref-1",
+        funding_account_id: "originator-bank",
+        desired: {
+          from: { account_id: "source-wallet", amount: "0.1", currency: "USDC", network: "POLYGON_AMOY" },
+          to: { account_id: "beneficiary-wallet", currency: "USDC", network: "POLYGON_AMOY" },
+        },
+      },
+    ]);
   });
 });

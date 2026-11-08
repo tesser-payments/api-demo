@@ -61,6 +61,7 @@ test.each(["org", "tenant"] as const)(
     await waitForBalance({ accountId: ledgerAccountId, currency: "USDC", amount: depositAmount });
 
     const paymentId = await createPayment({
+      fundingAccountId: ledgerAccountId,
       fromAccountId: ledgerAccountId,
       toAccountId: walletAccountId,
       amount: randomAmount(1, 2),

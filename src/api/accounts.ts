@@ -1,7 +1,7 @@
 import { get, getAll, post } from "../client.ts";
 import type { Payout } from "../payout.ts";
 import { isTransient, poll } from "../retry.ts";
-import type { Account, Envelope } from "../types.ts";
+import type { Account, AccountType, Envelope } from "../types.ts";
 
 export interface FundingBank {
   id: string;
@@ -9,7 +9,16 @@ export interface FundingBank {
   created: boolean;
 }
 
-const toCents = (amount: string) => Math.round(parseFloat(amount) * 100);
+// Stablecoin balances have 6 decimals; comparing all of them catches sub-cent fees.
+const toMicros = (amount: string) => Math.round(parseFloat(amount) * 1_000_000);
+
+const TEST_BANK_DETAILS = {
+  bank_name: "Hancock Whitney Bank",
+  bank_code_type: "ROUTING",
+  bank_identifier_code: "065400153",
+  bank_account_number: "000999999991",
+  bank_swift_code: "BARCGB22",
+};
 
 /**
  * The workspace's own fiat bank (unmanaged, no tenant, no counterparty) that
@@ -25,15 +34,31 @@ export async function findOrCreateFundingBank(): Promise<FundingBank> {
   const name = "Depositing Bank";
   const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
     name,
-    bank_name: "Hancock Whitney Bank",
-    bank_code_type: "ROUTING",
-    bank_identifier_code: "065400153",
-    bank_account_number: "000999999991",
+    ...TEST_BANK_DETAILS,
     tenant_id: null,
     counterparty_id: null,
-    bank_swift_code: "BARCGB22",
   });
   return { id: bank.data.id, name, created: true };
+}
+
+export async function createCounterpartyBank({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
+  const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
+    name,
+    ...TEST_BANK_DETAILS,
+    counterparty_id: counterpartyId,
+  });
+  return bank.data.id;
+}
+
+/** A counterparty's account of `type` named exactly `name`; throws if several share it. */
+export async function findCounterpartyAccount({ type, name }: { type: AccountType; name: string }): Promise<Account | undefined> {
+  // `search` matches part of the name, so the exact match is filtered here.
+  const candidates = await getAll<Account>(`/v1/accounts?type=${type}&search=${encodeURIComponent(name)}`);
+  const matches = candidates.filter((a) => a.name === name && a.counterparty_id);
+  if (matches.length > 1) {
+    throw new Error(`${matches.length} counterparty accounts are named "${name}"; delete the extras so exactly one remains`);
+  }
+  return matches[0];
 }
 
 export async function createCircleLedger({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
@@ -56,7 +81,7 @@ export async function createUnmanagedWallet({
 }: {
   counterpartyId: string;
   name: string;
-  payout: Payout;
+  payout: Pick<Payout, "walletType" | "address">;
 }): Promise<string> {
   const wallet = await post<{ data: { id: string } }>("/v1/accounts/wallets", {
     name,
@@ -66,18 +91,6 @@ export async function createUnmanagedWallet({
     counterparty_id: counterpartyId,
   });
   return wallet.data.id;
-}
-
-/** The workspace's own managed EVM wallet named exactly `name`; throws if several share it. */
-export async function findManagedEvmWallet(name: string): Promise<Account | undefined> {
-  const candidates = await getAll<Account>(
-    `/v1/accounts?type=stablecoin_ethereum&is_managed=true&search=${encodeURIComponent(name)}`,
-  );
-  const matches = candidates.filter((a) => a.name === name && !a.tenant_id && !a.counterparty_id);
-  if (matches.length > 1) {
-    throw new Error(`${matches.length} managed wallets are named "${name}"; delete the extras so exactly one remains`);
-  }
-  return matches[0];
 }
 
 /**
@@ -93,7 +106,7 @@ export async function createManagedEvmWallet({ name, signature }: { name: string
     );
     return wallet.data;
   } catch (err) {
-    if (err instanceof Error) err.message = err.message.replaceAll(signature, "<redacted>");
+    if (err instanceof Error && signature) err.message = err.message.replaceAll(signature, "<redacted>");
     throw err;
   }
 }
@@ -132,10 +145,15 @@ export interface BalanceQuery {
   network?: string;
 }
 
+export async function getAccount(accountId: string): Promise<Account> {
+  const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
+  return data;
+}
+
 /** The account's available balance in `currency` (and `network`), "0" if it holds none. */
 export async function getAvailableBalance({ accountId, currency, network }: BalanceQuery): Promise<string> {
-  const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
-  const asset = data.assets?.find((a) => a.currency === currency && (!network || a.network === network));
+  const account = await getAccount(accountId);
+  const asset = account.assets?.find((a) => a.currency === currency && (!network || a.network === network));
   return asset?.available_balance ?? "0";
 }
 
@@ -149,10 +167,10 @@ export async function waitForBalance({ amount, ...query }: BalanceQuery & { amou
     "Account balance",
     async () => {
       const available = await getAvailableBalance(query);
-      if (toCents(available) > toCents(amount)) {
+      if (toMicros(available) > toMicros(amount)) {
         throw new Error(`Account ${accountId} holds ${available} ${currency}, more than the expected ${amount}`);
       }
-      return toCents(available) === toCents(amount) ? available : undefined;
+      return toMicros(available) === toMicros(amount) ? available : undefined;
     },
     { timeoutMs: 60_000, intervalMs: 5_000, timeoutHint: `expected ${amount} ${currency} in account ${accountId}` },
   );
@@ -168,7 +186,7 @@ export async function assertBalanceHolds({
   while (true) {
     try {
       const available = await getAvailableBalance(query);
-      if (toCents(available) !== toCents(amount)) {
+      if (toMicros(available) !== toMicros(amount)) {
         throw new Error(`Account ${query.accountId} holds ${available} ${query.currency}, expected it to stay at ${amount}`);
       }
     } catch (error) {

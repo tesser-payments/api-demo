@@ -1,13 +1,16 @@
 import { getAll, post } from "../client.ts";
-import type { InboundNetwork } from "../inbound.ts";
 import { poll, postWithRetry } from "../retry.ts";
 import type { Envelope, MockedRiskStatus, Payment, SimulatedInboundPending } from "../types.ts";
 
+/** Networks `POST /v1/payments/simulate-inbound` sends on. */
+export type InboundNetwork = "POLYGON_AMOY" | "BASE_SEPOLIA" | "ETHEREUM_SEPOLIA" | "TEMPO_MODERATO";
+
 /**
- * A same-currency payout from one account to another. The source account
- * funds it, so it must belong to a counterparty or tenant.
+ * A same-currency payout from one account to another. `fundingAccountId` is the
+ * Travel Rule originator's account (a counterparty's or tenant's), or the source itself.
  */
 export async function createPayment({
+  fundingAccountId,
   fromAccountId,
   toAccountId,
   amount,
@@ -15,6 +18,7 @@ export async function createPayment({
   network,
   reference,
 }: {
+  fundingAccountId: string;
   fromAccountId: string;
   toAccountId: string;
   amount: string;
@@ -27,7 +31,7 @@ export async function createPayment({
     "/v1/payments",
     {
       organization_reference_id: reference,
-      funding_account_id: fromAccountId,
+      funding_account_id: fundingAccountId,
       desired: {
         from: { account_id: fromAccountId, amount, currency, network },
         to: { account_id: toAccountId, currency, network },
@@ -37,6 +41,30 @@ export async function createPayment({
     { retryOn: ["payments-3017"], attempts: 30 },
   );
   return payment.data.id;
+}
+
+/**
+ * Submit the signature for a wallet step. Plain `post` with the caller's key, so a
+ * retry resends the same signature under the same key.
+ */
+export async function submitStepSignature({
+  paymentId,
+  stepId,
+  signature,
+  idempotencyKey,
+}: {
+  paymentId: string;
+  stepId: string;
+  signature: string;
+  idempotencyKey: string;
+}): Promise<void> {
+  try {
+    await post(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
+  } catch (error) {
+    // The request body is in the error message; a signature authorizes moving the wallet's funds.
+    if (error instanceof Error && signature) error.message = error.message.replaceAll(signature, "<redacted>");
+    throw error;
+  }
 }
 
 /**

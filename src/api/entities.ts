@@ -26,8 +26,10 @@ export async function createTenant(): Promise<Entity> {
   return { id: tenant.data.tenant.id, name };
 }
 
-export async function createBusinessCounterparty({ tenantId }: { tenantId?: string } = {}): Promise<Entity> {
-  const name = faker.company.name();
+export async function createBusinessCounterparty({
+  tenantId,
+  name = faker.company.name(),
+}: { tenantId?: string; name?: string } = {}): Promise<Entity> {
   const counterparty = await post<{ data: { id: string } }>("/v1/entities/counterparties", {
     classification: "business",
     ...businessDetails(name),

@@ -1,5 +1,6 @@
 import pc from "picocolors";
-import { get, post } from "./client.ts";
+import { submitStepSignature } from "./api/payments.ts";
+import { ApiError, get, post } from "./client.ts";
 import { poll } from "./retry.ts";
 import type { Envelope, Payment, Step } from "./types.ts";
 
@@ -18,6 +19,8 @@ export function assertNoFailedStep(kind: string, steps: Step[]): void {
   throw new Error(`${kind} step ${failed.step_sequence} failed: ${reasons || "no reason given"}`);
 }
 
+const STEP_NOT_SIGNABLE = "payments-3060";
+
 export interface WaitForPaymentOptions {
   /**
    * Called once if risk screening holds the payment for review; resolve to
@@ -27,6 +30,8 @@ export interface WaitForPaymentOptions {
   decide?: (payment: Payment) => Promise<boolean>;
   /** Recorded with the review decision. */
   reason?: string;
+  /** Resolves to the `signature` for each transaction a step asks to sign; called again only after a transient error. */
+  sign?: (step: Step, payment: Payment) => Promise<string>;
   timeoutMs?: number;
   intervalMs?: number;
 }
@@ -37,11 +42,13 @@ export interface WaitForPaymentOptions {
  */
 export async function waitForPayment(
   paymentId: string,
-  { decide, reason, timeoutMs = 10 * 60_000, intervalMs }: WaitForPaymentOptions = {},
+  { decide, reason, sign, timeoutMs = 10 * 60_000, intervalMs }: WaitForPaymentOptions = {},
 ): Promise<Payment> {
   const reviewKey = crypto.randomUUID();
   let decision: boolean | undefined;
   let reviewed = false;
+  // Keyed by step and transaction: a retry resends the same signature and key, a new transaction is signed anew.
+  const signatures = new Map<string, { signature: string; idempotencyKey: string; submitted: boolean }>();
   let last = "";
 
   return poll(
@@ -71,13 +78,41 @@ export async function waitForPayment(
       }
 
       assertNoFailedStep("Payment", payment.steps);
+
+      for (const step of payment.steps) {
+        if (!sign || step.status !== "signature_requested" || !step.unsigned_transaction) continue;
+        const transactionKey = `${step.id}:${step.unsigned_transaction}`;
+        const known = signatures.get(transactionKey);
+        if (known?.submitted) continue;
+        const request = known ?? { signature: await sign(step, payment), idempotencyKey: crypto.randomUUID(), submitted: false };
+        signatures.set(transactionKey, request);
+        try {
+          await submitStepSignature({
+            paymentId,
+            stepId: step.id,
+            signature: request.signature,
+            idempotencyKey: request.idempotencyKey,
+          });
+        } catch (error) {
+          // A resend after a lost response: 5xx isn't idempotency-cached, so the platform reports the step signed.
+          const alreadyTaken = known !== undefined && error instanceof ApiError && error.hasCode(STEP_NOT_SIGNABLE);
+          if (!alreadyTaken) throw error;
+        }
+        request.submitted = true;
+        console.log(pc.dim(`  Signed step ${step.step_sequence}`));
+      }
+
       const done = payment.steps.length > 0 && payment.steps.every((s) => s.status === "completed");
       return done ? payment : undefined;
     },
     {
       timeoutMs,
       intervalMs,
-      timeoutHint: decide ? undefined : "If risk is awaiting_decision, approve or reject the payment",
+      timeoutHint: () => {
+        const reviewHint = !decide && last.includes("risk=awaiting_decision") && "approve or reject the payment's review";
+        const signHint = !sign && last.includes("=signature_requested") && "a step is waiting for a signature; pass sign";
+        return [`last seen ${last || "nothing"}`, reviewHint, signHint].filter(Boolean).join("; ");
+      },
     },
   );
 }
