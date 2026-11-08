@@ -16,10 +16,12 @@ CI runs both against staging after each platform deploy from `main`, on every pu
 Locally, with `.env.local` filled in:
 
 ```bash
+bun run build:signer            # first: the managed wallet test signs with it (needs a JDK 17–23)
 bun run e2e                     # every file in e2e/
-bun run build:signer            # once, before the managed wallet test (needs a JDK 17–23)
 bun test --timeout 300000 --env-file=.env.local ./e2e/payments/managed-wallet.test.ts
 ```
+
+The managed wallet test also needs `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`.
 
 ## Circle payout (`index.ts`, CI job `circle`)
 
@@ -50,7 +52,7 @@ The cases run in this order, each building on the one before:
 | 4 | USDC to an automatically approved beneficiary is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0xd3f72b3e91c8124dfc1b4273e93594bb00c9be6f`; signs the step's `unsigned_transaction` with the SDK | The payment is `outbound`, funded by the originator's bank, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.1). The balance drops by exactly 0.1 (reserved at signing; gas is sponsored) and stays put for 30 s |
 | 5 | USDC to a beneficiary held for review and approved is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0x0a5b2bf3ccfb44c1d22f07eed9553ecba752d4ad`; the test approves the review, then signs | Same checks, ending `manually_approved` |
 
-The wallet's balance goes 0 → 1 → 2 → 1.9 → 1.8, compared to all 6 decimals. Every run leaves 1.8 test USDC in its wallet. Both inbounds come from the platform's single faucet wallet, which doesn't queue nonces, which is why all cases run one at a time in this one file. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
+Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1), compared to all 6 decimals; from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8. Every run leaves 1.8 test USDC in its wallet. Both inbounds come from the platform's single faucet wallet, which doesn't queue nonces, which is why all cases run one at a time in this one file. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
 
 ## Not covered
 

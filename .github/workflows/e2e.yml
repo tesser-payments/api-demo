@@ -112,7 +112,8 @@ jobs:
         shell: bash
         run: |
           ./gradlew --no-daemon --quiet test installDist 2>&1 | tee -a ../../e2e.log
-          echo "Signing with the latest Kotlin SDK: $(ls build/install/tesser-signer/lib | grep -E '^sdk-[0-9]')"
+          sdk_jars=(build/install/tesser-signer/lib/sdk-[0-9]*.jar)
+          echo "Signing with the latest Kotlin SDK: ${sdk_jars[*]##*/}"
       - name: Unit tests that run the Kotlin signer
         shell: bash
         # Each test starts a JVM, which can outlast bun's 5 s default on a busy runner.
