@@ -66,7 +66,7 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `TURNKEY_API_PUBLIC_KEY` | No | With the two below, lets the inbound E2E create its managed wallets when they're missing. A Turnkey API key on the workspace's sub-organization; restrict it with a Turnkey policy to creating wallets |
 | `TURNKEY_API_PRIVATE_KEY` | No | Private half of that API key |
 | `TURNKEY_ORGANIZATION_ID` | No | The workspace's Turnkey sub-organization ID |
-| `SIGNING_PUBLIC_KEY` | For the outbound E2E | With the two below, the Turnkey signing key the outbound E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key. Use a workspace only the outbound E2E uses |
+| `SIGNING_PUBLIC_KEY` | For the outbound E2E | With the two below, the Turnkey signing key the outbound E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
 | `SIGNING_PRIVATE_KEY` | For the outbound E2E | Private half of that API key |
 | `SIGNING_ENCLAVE_ID` | For the outbound E2E | The workspace's Turnkey sub-organization ID |
 | `TESSER_FROM_ACCOUNT_ID` | No | Source account for the helper scripts |
@@ -163,7 +163,7 @@ The E2E tests in `e2e/`:
 
 The inbound test receives into two managed wallets of the workspace, `E2E inbound, auto-approved` and `E2E inbound, manual review`, used by nothing else so their balances only move by the test's own inbound. It creates them when the `TURNKEY_*` variables are set; otherwise create them once in the dashboard.
 
-The outbound test creates a wallet named `E2E outbound <run id>` on every run, so run it in a workspace of its own: its signing key can create and sign for any wallet in that workspace. The originator (`E2E outbound originator`, whose bank account is the payment's `funding_account_id`) and the beneficiary wallets at the documented risk-test addresses are created on first use and reused.
+The outbound test creates a wallet named `E2E outbound <run id>` on every run, so its signing key can create and sign for any wallet in the workspace. The originator (`E2E outbound originator`, whose bank account is the payment's `funding_account_id`) and the beneficiary wallets at the documented risk-test addresses are created on first use and reused.
 
 ---
 
@@ -188,11 +188,9 @@ The E2E runs against staging, which the platform deploys from `main`, so a run f
 | `STAGING_TESSER_CLIENT_SECRET` | Tesser staging API client secret |
 | `STAGING_TESSER_BASE_URL` | Tesser staging base URL |
 | `STAGING_TESSER_AUTH_URL` | Staging auth token endpoint URL |
-| `STAGING_OUTBOUND_TESSER_CLIENT_ID` | API client ID of the staging workspace only the outbound E2E uses |
-| `STAGING_OUTBOUND_TESSER_CLIENT_SECRET` | That client's secret |
-| `STAGING_OUTBOUND_SIGNING_PUBLIC_KEY` | The signing key the dashboard shows with that API key |
-| `STAGING_OUTBOUND_SIGNING_PRIVATE_KEY` | Private half of that signing key |
-| `STAGING_OUTBOUND_SIGNING_ENCLAVE_ID` | That workspace's Turnkey sub-organization ID (the signing key's enclave ID) |
+| `STAGING_SIGNING_PUBLIC_KEY` | The outbound E2E's signing key: the one the dashboard shows when you create an API key in the staging workspace |
+| `STAGING_SIGNING_PRIVATE_KEY` | Private half of that signing key |
+| `STAGING_SIGNING_ENCLAVE_ID` | The staging workspace's Turnkey sub-organization ID (the signing key's enclave ID) |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |
 | `BENEFICIARY_WALLET_ADDRESS` | Optional. Must match `PAYMENT_NETWORK` |
 | `ENABLE_VARIANTS` | Optional. `A`, `B`, or `BOTH` |

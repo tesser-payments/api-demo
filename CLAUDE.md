@@ -83,7 +83,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 - **Fail before calling the API** on bad configuration (see `payoutConfig`).
 - **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key, a managed wallet's Turnkey signature and a step's signature) and the auth response. Step 1.5 redacts the key from its error, `createManagedEvmWallet` the wallet signature and `waitForPayment` the step signature. The Kotlin signer gets only `PATH`, `JAVA_HOME` and `SIGNING_*`, never the API credentials. CI logs of this public repo are public.
 - **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the inbound E2E's dedicated managed wallets, and the outbound E2E's wallet created each run).
-- **The outbound E2E's workspace:** it creates a managed wallet every run, with a key that can create and sign for any wallet in its sub-organization, so it runs in a staging workspace of its own (`STAGING_OUTBOUND_*`).
+- **The outbound E2E's signing key** (`STAGING_SIGNING_*` in CI) can create and sign for any wallet in the workspace's sub-organization, since the test creates a new wallet every run. Never print it or the step signatures.
 - **Public repo:** keep internal ids, organization names and private URLs out of commits and code.
 
 ### Environment prerequisites (per Tesser organization)
