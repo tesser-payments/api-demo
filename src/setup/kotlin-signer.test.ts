@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
 import { throwawayApiKey } from "../testing/api-key.ts";
 import type { Payment, Step } from "../types.ts";
-import { KOTLIN_SIGNER, SIGNING_VARIABLES, signWithKotlinSdk } from "./kotlin-signer.ts";
+import { createWalletWithKotlinSdk, KOTLIN_SIGNER, SIGNING_VARIABLES, signWithKotlinSdk } from "./kotlin-signer.ts";
 
 const leg = { account_id: null, amount: null, currency: null, network: null };
 
@@ -24,8 +24,14 @@ const step: Step = {
 const payment = { id: "payment-1" } as Payment;
 
 let fetchSpy: ReturnType<typeof spyOn>;
-const fetched: string[] = [];
+const requests: { method: string; path: string; body?: unknown }[] = [];
 let publicKey: string;
+
+const decodeSignature = (signature: string) => {
+  const envelope = JSON.parse(atob(signature)) as { body: string; stamp: string };
+  const stamp = JSON.parse(Buffer.from(envelope.stamp, "base64url").toString()) as { publicKey: string };
+  return { body: JSON.parse(envelope.body), rawBody: envelope.body, stampPublicKey: stamp.publicKey };
+};
 
 describe("signWithKotlinSdk on an incomplete step", () => {
   test("fails naming the step when it has no transaction to sign", async () => {
@@ -43,9 +49,9 @@ describe("signWithKotlinSdk on an incomplete step", () => {
 // Skipped only while the signer isn't built; CI always builds it first.
 const signerBuilt = await Bun.file(KOTLIN_SIGNER).exists();
 
-describe.skipIf(!signerBuilt && !process.env.CI)("signWithKotlinSdk", () => {
+describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
   beforeEach(async () => {
-    fetched.length = 0;
+    requests.length = 0;
     process.env.TESSER_CLIENT_ID ||= "test";
     process.env.TESSER_CLIENT_SECRET ||= "test";
     const keys = await throwawayApiKey();
@@ -58,7 +64,12 @@ describe.skipIf(!signerBuilt && !process.env.CI)("signWithKotlinSdk", () => {
     fetchSpy.mockImplementation(async (url: unknown, init?: RequestInit) => {
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (!headers.Authorization) return Response.json({ access_token: "t" });
-      fetched.push(new URL(String(url)).pathname);
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      requests.push({ method, path: new URL(String(url)).pathname, ...(body && { body }) });
+      if (method === "POST") {
+        return Response.json({ data: { id: "new-wallet", name: body.name, type: body.type, is_managed: true } }, { status: 201 });
+      }
       return Response.json({ data: { id: "source-wallet", crypto_wallet_address: "0x00000000000000000000000000000000000000a1" } });
     });
     await authenticate();
@@ -71,14 +82,31 @@ describe.skipIf(!signerBuilt && !process.env.CI)("signWithKotlinSdk", () => {
   test("signs the step's transaction with the source wallet's address from the API", async () => {
     const signature = await signWithKotlinSdk(step, payment);
 
-    expect(fetched).toEqual(["/v1/accounts/source-wallet"]);
-    const envelope = JSON.parse(atob(signature)) as { body: string; stamp: string };
-    const body = JSON.parse(envelope.body);
+    expect(requests).toEqual([{ method: "GET", path: "/v1/accounts/source-wallet" }]);
+    const { body, stampPublicKey } = decodeSignature(signature);
     expect(body.type).toBe("ACTIVITY_TYPE_SIGN_TRANSACTION_V2");
     expect(body.organizationId).toBe("sub-org-1");
     expect(body.parameters.unsignedTransaction).toBe("0x02f00189");
     expect(body.parameters.signWith).toBe("0x00000000000000000000000000000000000000a1");
-    expect(JSON.parse(Buffer.from(envelope.stamp, "base64url").toString()).publicKey).toBe(publicKey);
+    expect(stampPublicKey).toBe(publicKey);
+  });
+
+  test("creates a managed wallet with the creation the Kotlin SDK stamps for its name", async () => {
+    const wallet = await createWalletWithKotlinSdk("E2E outbound run-1");
+
+    expect(wallet.id).toBe("new-wallet");
+    expect(requests).toEqual([
+      {
+        method: "POST",
+        path: "/v1/accounts/wallets",
+        body: { name: "E2E outbound run-1", type: "stablecoin_ethereum", is_managed: true, signature: expect.any(String) },
+      },
+    ]);
+    const { body, rawBody, stampPublicKey } = decodeSignature((requests[0]!.body as { signature: string }).signature);
+    expect(body.type).toStartWith("ACTIVITY_TYPE_CREATE_WALLET");
+    expect(body.organizationId).toBe("sub-org-1");
+    expect(rawBody).toContain('"E2E outbound run-1"');
+    expect(stampPublicKey).toBe(publicKey);
   });
 
   test("fails with the signer's reason when it can't sign", async () => {

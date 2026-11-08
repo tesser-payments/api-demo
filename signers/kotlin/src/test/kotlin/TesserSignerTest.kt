@@ -15,8 +15,9 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
-class SignStepTest {
+class TesserSignerTest {
     private val step =
         """
         {
@@ -27,6 +28,8 @@ class SignStepTest {
           "network": "POLYGON_AMOY"
         }
         """.trimIndent()
+
+    private val wallet = """{ "name": "E2E outbound run-1", "type": "stablecoin_ethereum" }"""
 
     private val publicKey: String
     private val signingEnv: Map<String, String>
@@ -43,10 +46,9 @@ class SignStepTest {
     }
 
     @Test
-    fun `stamps a sign-transaction activity for the step's transaction and wallet`() {
-        val signature = runBlocking { signStep(step, signingEnv) }
+    fun `sign-step stamps a sign-transaction activity for the step's transaction and wallet`() {
+        val envelope = decode(runBlocking { runCommand("sign-step", step, signingEnv) })
 
-        val envelope = Json.parseToJsonElement(Base64.getDecoder().decode(signature).decodeToString()).jsonObject
         val body = Json.parseToJsonElement(envelope.string("body")).jsonObject
         val parameters = body.getValue("parameters").jsonObject
         assertEquals("ACTIVITY_TYPE_SIGN_TRANSACTION_V2", body.string("type"))
@@ -54,16 +56,35 @@ class SignStepTest {
         assertEquals("0x02f00189", parameters.string("unsignedTransaction"))
         assertEquals("0x00000000000000000000000000000000000000a1", parameters.string("signWith"))
         assertEquals("TRANSACTION_TYPE_ETHEREUM", parameters.string("type"))
+        assertEquals(publicKey, stampPublicKey(envelope))
+    }
 
-        val stamp = Json.parseToJsonElement(Base64.getUrlDecoder().decode(envelope.string("stamp")).decodeToString()).jsonObject
-        assertEquals(publicKey, stamp.string("publicKey"))
+    @Test
+    fun `create-wallet stamps the wallet's creation in the enclave under its name`() {
+        val envelope = decode(runBlocking { runCommand("create-wallet", wallet, signingEnv) })
+
+        val body = Json.parseToJsonElement(envelope.string("body")).jsonObject
+        assertTrue(body.string("type").startsWith("ACTIVITY_TYPE_CREATE_WALLET"), body.string("type"))
+        assertEquals("sub-org-1", body.string("organizationId"))
+        assertContains(envelope.string("body"), "\"E2E outbound run-1\"")
+        assertEquals(publicKey, stampPublicKey(envelope))
+    }
+
+    @Test
+    fun `refuses a command it doesn't know, naming the ones it does`() {
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                runBlocking { runCommand("sign-everything", step, signingEnv) }
+            }
+        assertContains(error.message.orEmpty(), "sign-step")
+        assertContains(error.message.orEmpty(), "create-wallet")
     }
 
     @Test
     fun `names the signing variable that is not set`() {
         val error =
             assertFailsWith<IllegalStateException> {
-                runBlocking { signStep(step, signingEnv - "SIGNING_PRIVATE_KEY") }
+                runBlocking { runCommand("sign-step", step, signingEnv - "SIGNING_PRIVATE_KEY") }
             }
         assertContains(error.message.orEmpty(), "SIGNING_PRIVATE_KEY")
     }
@@ -73,7 +94,7 @@ class SignStepTest {
         val withoutSignWith = step.replace(""""signWith": "0x00000000000000000000000000000000000000a1",""", "")
         val error =
             assertFailsWith<IllegalArgumentException> {
-                runBlocking { signStep(withoutSignWith, signingEnv) }
+                runBlocking { runCommand("sign-step", withoutSignWith, signingEnv) }
             }
         assertContains(error.message.orEmpty(), "signWith")
     }
@@ -83,13 +104,21 @@ class SignStepTest {
         val withNullTransaction = step.replace(""""0x02f00189"""", "null")
         val error =
             assertFailsWith<IllegalArgumentException> {
-                runBlocking { signStep(withNullTransaction, signingEnv) }
+                runBlocking { runCommand("sign-step", withNullTransaction, signingEnv) }
             }
         assertContains(error.message.orEmpty(), "unsignedTransaction")
     }
 }
 
 private fun JsonObject.string(key: String) = getValue(key).jsonPrimitive.content
+
+private fun decode(signature: String) =
+    Json.parseToJsonElement(Base64.getDecoder().decode(signature).decodeToString()).jsonObject
+
+private fun stampPublicKey(envelope: JsonObject) =
+    Json.parseToJsonElement(Base64.getUrlDecoder().decode(envelope.string("stamp")).decodeToString())
+        .jsonObject
+        .string("publicKey")
 
 // A P-256 key pair in Turnkey's API key format: compressed hex public key and hex private scalar.
 private fun throwawayApiKey(): Pair<String, String> {

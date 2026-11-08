@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { createManagedEvmWallet } from "../api/accounts.ts";
 import { get } from "../client.ts";
 import type { Account, Envelope, Payment, Step } from "../types.ts";
 
@@ -6,15 +7,18 @@ import type { Account, Envelope, Payment, Step } from "../types.ts";
 export const SIGNING_VARIABLES = ["SIGNING_PUBLIC_KEY", "SIGNING_PRIVATE_KEY", "SIGNING_ENCLAVE_ID"] as const;
 
 /** The launcher `bun run build:signer` installs (signers/kotlin). */
-export const KOTLIN_SIGNER = join(import.meta.dir, "../../signers/kotlin/build/install/sign-step/bin/sign-step");
+export const KOTLIN_SIGNER = join(import.meta.dir, "../../signers/kotlin/build/install/tesser-signer/bin/tesser-signer");
 
-/** The Kotlin SDK's `StepForSigning`. */
-export interface StepForSigning {
-  id: string;
-  transferId: string;
-  unsignedTransaction: string;
-  signWith: string;
-  network: string;
+/** What each signer command reads on stdin: the Kotlin SDK's `StepForSigning` and `CreateWalletParams`. */
+interface SignerInputs {
+  "sign-step": { id: string; transferId: string; unsignedTransaction: string; signWith: string; network: string };
+  "create-wallet": { name: string; type: "stablecoin_ethereum" };
+}
+
+/** A managed EVM wallet created with the signature the Kotlin SDK stamps for `name`. */
+export async function createWalletWithKotlinSdk(name: string): Promise<Account> {
+  const signature = await runKotlinSigner("create-wallet", { name, type: "stablecoin_ethereum" });
+  return createManagedEvmWallet({ name, signature });
 }
 
 /** Sign a payment step with the Kotlin SDK; `signWith` is its `estimated.from.account_id`'s address, as the guide says. */
@@ -26,7 +30,7 @@ export async function signWithKotlinSdk(step: Step, payment: Payment): Promise<s
   const { data: source } = await get<Envelope<Account>>(`/v1/accounts/${sourceAccountId}`);
   if (!source.crypto_wallet_address) throw new Error(`Account ${source.id} has no wallet address to sign with`);
 
-  return runKotlinSigner({
+  return runKotlinSigner("sign-step", {
     id: step.id,
     transferId: payment.id,
     unsignedTransaction: step.unsigned_transaction,
@@ -35,11 +39,11 @@ export async function signWithKotlinSdk(step: Step, payment: Payment): Promise<s
   });
 }
 
-/** Run the signer on one step and return its `signature`; the key comes from `SIGNING_VARIABLES`. */
-export async function runKotlinSigner(stepForSigning: StepForSigning): Promise<string> {
-  const signer = Bun.spawn([KOTLIN_SIGNER], {
+/** Run one signer command and return its `signature`; the key comes from `SIGNING_VARIABLES`. */
+export async function runKotlinSigner<C extends keyof SignerInputs>(command: C, input: SignerInputs[C]): Promise<string> {
+  const signer = Bun.spawn([KOTLIN_SIGNER, command], {
     env: signerEnvironment(),
-    stdin: new Blob([JSON.stringify(stepForSigning)]),
+    stdin: new Blob([JSON.stringify(input)]),
     stdout: "pipe",
     stderr: "pipe",
   });

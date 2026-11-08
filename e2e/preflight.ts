@@ -4,7 +4,6 @@ import {
   createUnmanagedWallet,
   findCounterpartyAccount,
   findManagedEvmWallet,
-  getAvailableBalance,
 } from "../src/api/accounts.ts";
 import { createBusinessCounterparty, createIndividualCounterparty } from "../src/api/entities.ts";
 import { findCircleMasterLedger, findCircleWireBank, storeCircleKey } from "../src/setup/circle.ts";
@@ -50,7 +49,7 @@ export async function findOrCreateManagedWallet(
 export async function requireKotlinSigner(): Promise<void> {
   for (const name of SIGNING_VARIABLES) requireEnv(name);
   try {
-    await runKotlinSigner({
+    await runKotlinSigner("sign-step", {
       id: "preflight",
       transferId: "preflight",
       unsignedTransaction: "0x02",
@@ -62,33 +61,6 @@ export async function requireKotlinSigner(): Promise<void> {
       `The Kotlin signer can't sign: ${(error as Error).message}. Run \`bun run build:signer\` and point JAVA_HOME at a JDK 21`,
     );
   }
-}
-
-/** The workspace's managed EVM wallet `name` with at least `minimum`; never created, since the key can only sign. */
-export async function requireFundedManagedWallet({
-  name,
-  currency,
-  network,
-  minimum,
-}: {
-  name: string;
-  currency: string;
-  network: string;
-  minimum: string;
-}): Promise<Account> {
-  const wallet = await findManagedEvmWallet(name);
-  if (!wallet) {
-    throw new Error(
-      `No managed wallet named "${name}". Create it once in the dashboard (an EVM wallet owned by the workspace), fund it with ${currency} on ${network}, and allow its address in the signing key's Turnkey policy`,
-    );
-  }
-  const available = await getAvailableBalance({ accountId: wallet.id, currency, network });
-  if (parseFloat(available) < parseFloat(minimum)) {
-    throw new Error(
-      `The "${name}" wallet holds ${available} ${currency} on ${network}, less than the ${minimum} this run pays out. Fund ${wallet.crypto_wallet_address} with ${currency} on ${network}`,
-    );
-  }
-  return wallet;
 }
 
 /** The bank account `name` of a business counterparty of the same name, created on first use. */

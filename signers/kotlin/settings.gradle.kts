@@ -1,1 +1,1 @@
-rootProject.name = "sign-step"
+rootProject.name = "tesser-signer"
