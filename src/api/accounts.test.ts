@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
-import { findCounterpartyAccount, findManagedEvmWallet } from "./accounts.ts";
+import { assertBalanceHolds, findCounterpartyAccount, findManagedEvmWallet, waitForBalance } from "./accounts.ts";
 
 let fetchSpy: ReturnType<typeof spyOn>;
 
@@ -77,5 +77,27 @@ describe("findCounterpartyAccount", () => {
       wallet("b", "E2E outbound originator", { counterparty_id: "c2" }),
     ]);
     await expect(findCounterpartyAccount(query)).rejects.toThrow("2 counterparty accounts");
+  });
+});
+
+describe("balance checks", () => {
+  async function serveBalance(available_balance: string) {
+    fetchSpy.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (!headers.Authorization) return Response.json({ access_token: "t" });
+      return Response.json({ data: { id: "w1", assets: [{ currency: "USDC", network: "POLYGON_AMOY", available_balance }] } });
+    });
+    await authenticate();
+  }
+  const query = { accountId: "w1", currency: "USDC", network: "POLYGON_AMOY" };
+
+  test("waitForBalance fails on a sub-cent difference above the expected amount", async () => {
+    await serveBalance("1.004000");
+    await expect(waitForBalance({ ...query, amount: "1.000000" })).rejects.toThrow("more than the expected 1.000000");
+  });
+
+  test("assertBalanceHolds fails on a sub-cent drift", async () => {
+    await serveBalance("0.899990");
+    await expect(assertBalanceHolds({ ...query, amount: "0.900000", holdMs: 0 })).rejects.toThrow("expected it to stay at 0.900000");
   });
 });

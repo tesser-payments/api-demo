@@ -24,7 +24,7 @@ TESSER_CLIENT_SECRET=<your client secret>
 CIRCLE_API_KEY=<Circle Mint sandbox key>   # unless Circle is already connected
 ```
 
-Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the inbound E2E `INBOUND_NETWORK` (default `POLYGON_AMOY`) and `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID`, and for the outbound E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 21 to build its signer (`bun run build:signer`). The README has the full table.
+Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the inbound E2E `INBOUND_NETWORK` (default `POLYGON_AMOY`) and `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID`, and for the outbound E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 17–23 to build its signer (`bun run build:signer`). The README has the full table.
 
 | Constant | Value |
 |----------|-------|
@@ -69,7 +69,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI: typecheck, signer build and tests, unit tests, then `index.ts`, the inbound and the outbound E2E on staging (after a platform deploy, a merge to `main`, or by hand); pull requests stop after the unit tests |
+| `.github/workflows/e2e.yml` | CI: typecheck, unit tests, `index.ts` and the inbound E2E, then the Kotlin signer's build and tests and the outbound E2E, so a broken SDK release fails only those. Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
@@ -78,7 +78,7 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 - **Creates that must not happen twice** (deposits, simulate, payments, reviews): use `postWithRetry(label, path, body, { retryOn?, attempts? })`. It sets an `Idempotency-Key`, keeps it across transient retries, and renews it after a `retryOn` code, because the platform replays a cached 4xx for the same key. Exceptions, sent once with plain `post`: `simulateInbound` (a 5xx can follow funds already sent) and `createManagedEvmWallet` (retry logs would print the Turnkey signature). The step sign request in `waitForPayment` also uses plain `post`, with one `Idempotency-Key` per step that a retry reuses with the same signature.
 - **Retry only what can recover:** network errors, 5xx, 429 and `idempotency-0001` (see `isTransient`), plus a named not-ready code via `retryOn`. Never add blanket retries: any other 4xx must fail on the first attempt.
 - **Waiting for async state:** use `poll(label, check, { timeoutMs, intervalMs?, timeoutHint })`. `check` returns `undefined` to keep waiting, a value to finish, or throws to stop. Give every wait an explicit limit and a `timeoutHint` naming the likely cause.
-- **Payments:** wait with `waitForPayment(id, { decide?, reason?, sign? })`. `sign(step, payment)` returns the `signature` for a `signature_requested` step and is called once per step; the E2E passes `signWithKotlinSdk`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
+- **Payments:** wait with `waitForPayment(id, { decide?, reason?, sign? })`. `sign(step, payment)` returns the `signature` for a `signature_requested` step; it is called once per transaction, again only if it throws; the E2E passes `signWithKotlinSdk`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
 - **Deposits:** give each deposit its own random amount; Circle matches a simulated wire to its deposit by exact amount. Tag deposits and payments with `organization_reference_id` (`e2e-<RUN_ID>-<variant>-…`).
 - **Fail before calling the API** on bad configuration (see `payoutConfig`).
 - **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key, a managed wallet's Turnkey signature and a step's signature) and the auth response. Step 1.5 redacts the key from its error, `createManagedEvmWallet` the wallet signature and `waitForPayment` the step signature. The Kotlin signer gets only `PATH`, `JAVA_HOME`, `SIGNING_*` and `TESSER_BASE_URL`, never the API credentials. CI logs of this public repo are public.

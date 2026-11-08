@@ -1,9 +1,8 @@
 import { join } from "node:path";
-import { createManagedEvmWallet } from "../api/accounts.ts";
-import { apiBaseUrl, get } from "../client.ts";
-import type { Account, Envelope, Payment, Step } from "../types.ts";
+import { createManagedEvmWallet, getAccount } from "../api/accounts.ts";
+import { apiBaseUrl } from "../client.ts";
+import type { Account, Payment, Step } from "../types.ts";
 
-/** Where the signer reads its Turnkey API key from. */
 export const SIGNING_VARIABLES = ["SIGNING_PUBLIC_KEY", "SIGNING_PRIVATE_KEY", "SIGNING_ENCLAVE_ID"] as const;
 
 /** The launcher `bun run build:signer` installs (signers/kotlin). */
@@ -27,7 +26,7 @@ export async function signWithKotlinSdk(step: Step, payment: Payment): Promise<s
   if (!step.unsigned_transaction) throw new Error(`Step ${step.id} has no unsigned transaction to sign`);
   if (!network) throw new Error(`Step ${step.id} has no source network to sign for`);
   if (!sourceAccountId) throw new Error(`Step ${step.id} has no source account to sign with`);
-  const { data: source } = await get<Envelope<Account>>(`/v1/accounts/${sourceAccountId}`);
+  const source = await getAccount(sourceAccountId);
   if (!source.crypto_wallet_address) throw new Error(`Account ${source.id} has no wallet address to sign with`);
 
   return runKotlinSigner("sign-step", {

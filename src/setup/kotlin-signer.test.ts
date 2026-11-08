@@ -46,7 +46,7 @@ describe("signWithKotlinSdk on an incomplete step", () => {
   });
 });
 
-// Skipped only while the signer isn't built; CI always builds it first.
+// Skipped while the signer isn't built; CI runs this file again once it is, with REQUIRE_KOTLIN_SIGNER set.
 const signerBuilt = await Bun.file(KOTLIN_SIGNER).exists();
 
 // What Tesser's unsigned-payload endpoint serves: the creation the SDK must stamp unchanged.
@@ -69,9 +69,11 @@ const servedCreation = JSON.stringify({
 });
 const payloadRequests: URL[] = [];
 let tesser: ReturnType<typeof Bun.serve>;
-const savedBaseUrl = process.env.TESSER_BASE_URL;
+// Restored after each test, so a developer's own values survive the run.
+const overwritten = [...SIGNING_VARIABLES, "TESSER_BASE_URL"];
+const saved = new Map(overwritten.map((name) => [name, process.env[name]]));
 
-describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
+describe.skipIf(!signerBuilt && !process.env.REQUIRE_KOTLIN_SIGNER)("the Kotlin signer", () => {
   // The JVM calls Tesser over the network, so it gets a real local server rather than the fetch spy.
   beforeAll(() => {
     tesser = Bun.serve({
@@ -115,9 +117,10 @@ describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
   });
   afterEach(() => {
     fetchSpy.mockRestore();
-    for (const name of SIGNING_VARIABLES) delete process.env[name];
-    if (savedBaseUrl === undefined) delete process.env.TESSER_BASE_URL;
-    else process.env.TESSER_BASE_URL = savedBaseUrl;
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   test("signs the step's transaction with the source wallet's address from the API", async () => {

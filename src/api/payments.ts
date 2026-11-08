@@ -42,6 +42,30 @@ export async function createPayment({
 }
 
 /**
+ * Submit the signature for a wallet step. Plain `post` with the caller's key, so a
+ * retry resends the same signature under the same key.
+ */
+export async function submitStepSignature({
+  paymentId,
+  stepId,
+  signature,
+  idempotencyKey,
+}: {
+  paymentId: string;
+  stepId: string;
+  signature: string;
+  idempotencyKey: string;
+}): Promise<void> {
+  try {
+    await post(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
+  } catch (error) {
+    // The request body is in the error message; a signature authorizes moving the wallet's funds.
+    if (error instanceof Error) error.message = error.message.replaceAll(signature, "<redacted>");
+    throw error;
+  }
+}
+
+/**
  * Sandbox only: Tesser sends 1 test USDC to the managed wallet `toAccountId`, with
  * the sender's screening verdict forced to `mockedRiskStatus`. Returns the payment id.
  */

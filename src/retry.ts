@@ -98,8 +98,8 @@ export async function postWithRetry<T>(
 export interface PollOptions {
   timeoutMs: number;
   intervalMs?: number;
-  /** Appended to the timeout error, e.g. the likely cause. */
-  timeoutHint?: string;
+  /** Appended to the timeout error, e.g. the likely cause; a function is called at the timeout. */
+  timeoutHint?: string | (() => string);
 }
 
 /**
@@ -124,10 +124,8 @@ export async function poll<T>(
 
     const elapsed = Date.now() - start;
     if (elapsed + intervalMs > timeoutMs) {
-      throw new Error(
-        `${label} timed out after ${Math.round(elapsed / 1000)}s` +
-          (timeoutHint ? `. ${timeoutHint}` : ""),
-      );
+      const hint = typeof timeoutHint === "function" ? timeoutHint() : timeoutHint;
+      throw new Error(`${label} timed out after ${Math.round(elapsed / 1000)}s` + (hint ? `. ${hint}` : ""));
     }
     await Bun.sleep(intervalMs);
   }

@@ -136,6 +136,13 @@ describe("waitForPayment", () => {
     await expect(waitForPayment("p1", fast)).rejects.toThrow("was rejected (automatically_rejected)");
   });
 
+  test("a timeout names the payment's last state", async () => {
+    await serve(payment("automatically_approved", [step("signature_requested", { unsigned_transaction: "0x02aa" })]));
+    await expect(waitForPayment("p1", { timeoutMs: 50, intervalMs: 1 })).rejects.toThrow(
+      "last seen risk=automatically_approved  balance=-  step1=signature_requested",
+    );
+  });
+
   test("a failed step fails at once with its reasons", async () => {
     await serve(
       payment("automatically_approved", [

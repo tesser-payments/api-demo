@@ -120,8 +120,7 @@ test.each(scenarios)(
     expect(payment.actual.to.network).toBe(NETWORK);
     expect(payment.actual.to.currency).toBe("USDC");
     expect(parseFloat(payment.actual.to.amount ?? "0")).toBe(parseFloat(PAYOUT_AMOUNT));
-    // Exact to the smallest unit: signing reserved the payout and gas is sponsored, so nothing else leaves.
-    expect(exactly(parseFloat(await getAvailableBalance(balance)))).toBe(debited);
+    // Signing reserved the payout and gas is sponsored, so nothing else leaves the wallet.
     await assertBalanceHolds({ ...balance, amount: debited, holdMs: BALANCE_HOLD_MS });
   },
   PAYOUT_TIMEOUT_MS,

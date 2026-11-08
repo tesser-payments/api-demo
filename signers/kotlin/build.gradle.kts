@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.concurrent.TimeUnit
 
 plugins {
@@ -24,8 +25,16 @@ configurations.all {
     resolutionStrategy.cacheDynamicVersionsFor(0, TimeUnit.SECONDS)
 }
 
+// Builds with whichever JDK runs Gradle; the output runs on Java 17+, like the SDK.
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
 kotlin {
-    jvmToolchain(21)
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
 }
 
 application {

@@ -9,7 +9,8 @@ export interface FundingBank {
   created: boolean;
 }
 
-const toCents = (amount: string) => Math.round(parseFloat(amount) * 100);
+// Stablecoin balances have 6 decimals; comparing all of them catches sub-cent fees.
+const toMicros = (amount: string) => Math.round(parseFloat(amount) * 1_000_000);
 
 const TEST_BANK_DETAILS = {
   bank_name: "Hancock Whitney Bank",
@@ -40,7 +41,6 @@ export async function findOrCreateFundingBank(): Promise<FundingBank> {
   return { id: bank.data.id, name, created: true };
 }
 
-/** A fiat bank account owned by the counterparty `counterpartyId`. */
 export async function createCounterpartyBank({ counterpartyId, name }: { counterpartyId: string; name: string }): Promise<string> {
   const bank = await post<{ data: { id: string } }>("/v1/accounts/banks", {
     name,
@@ -174,10 +174,15 @@ export interface BalanceQuery {
   network?: string;
 }
 
+export async function getAccount(accountId: string): Promise<Account> {
+  const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
+  return data;
+}
+
 /** The account's available balance in `currency` (and `network`), "0" if it holds none. */
 export async function getAvailableBalance({ accountId, currency, network }: BalanceQuery): Promise<string> {
-  const { data } = await get<Envelope<Account>>(`/v1/accounts/${accountId}`);
-  const asset = data.assets?.find((a) => a.currency === currency && (!network || a.network === network));
+  const account = await getAccount(accountId);
+  const asset = account.assets?.find((a) => a.currency === currency && (!network || a.network === network));
   return asset?.available_balance ?? "0";
 }
 
@@ -191,10 +196,10 @@ export async function waitForBalance({ amount, ...query }: BalanceQuery & { amou
     "Account balance",
     async () => {
       const available = await getAvailableBalance(query);
-      if (toCents(available) > toCents(amount)) {
+      if (toMicros(available) > toMicros(amount)) {
         throw new Error(`Account ${accountId} holds ${available} ${currency}, more than the expected ${amount}`);
       }
-      return toCents(available) === toCents(amount) ? available : undefined;
+      return toMicros(available) === toMicros(amount) ? available : undefined;
     },
     { timeoutMs: 60_000, intervalMs: 5_000, timeoutHint: `expected ${amount} ${currency} in account ${accountId}` },
   );
@@ -210,7 +215,7 @@ export async function assertBalanceHolds({
   while (true) {
     try {
       const available = await getAvailableBalance(query);
-      if (toCents(available) !== toCents(amount)) {
+      if (toMicros(available) !== toMicros(amount)) {
         throw new Error(`Account ${query.accountId} holds ${available} ${query.currency}, expected it to stay at ${amount}`);
       }
     } catch (error) {

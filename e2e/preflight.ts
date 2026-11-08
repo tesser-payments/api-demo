@@ -58,7 +58,7 @@ export async function requireKotlinSigner(): Promise<void> {
     });
   } catch (error) {
     throw new Error(
-      `The Kotlin signer can't sign: ${(error as Error).message}. Run \`bun run build:signer\` and point JAVA_HOME at a JDK 21`,
+      `The Kotlin signer can't sign: ${(error as Error).message}. Run \`bun run build:signer\` and point JAVA_HOME at a JDK 17–23`,
     );
   }
 }

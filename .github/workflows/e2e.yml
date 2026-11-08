@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  # Pull requests only get the typecheck, the signer build and the unit tests; the live E2E is skipped.
+  # Pull requests only get the typecheck, the unit tests and the signer build; the live E2E is skipped.
   pull_request:
 
 # Live runs share the same wallets, so they queue instead of overlapping.
@@ -26,19 +26,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bunx tsc --noEmit
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: gradle
-      # Pull requests run the committed gradle-wrapper.jar, so check it is Gradle's.
-      - uses: gradle/actions/wrapper-validation@v6
-      # Before the unit tests, which run the signer for real.
-      - name: Build and test the Kotlin signer
-        working-directory: signers/kotlin
-        run: |
-          ./gradlew --no-daemon --quiet test installDist
-          echo "Signing with the latest Kotlin SDK: $(ls build/install/tesser-signer/lib | grep -E '^sdk-[0-9]')"
       - name: Unit tests
         run: bun test
       - name: Run Circle payout E2E
@@ -72,8 +59,32 @@ jobs:
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
+      # The Kotlin steps come last: a broken SDK release fails only the outbound E2E.
+      - uses: actions/setup-java@v4
+        if: ${{ !cancelled() }}
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      # Pull requests run the committed gradle-wrapper.jar, so check it is Gradle's.
+      - uses: gradle/actions/wrapper-validation@v6
+        if: ${{ !cancelled() }}
+      - name: Build and test the Kotlin signer
+        id: signer
+        if: ${{ !cancelled() }}
+        working-directory: signers/kotlin
+        shell: bash
+        run: |
+          ./gradlew --no-daemon --quiet test installDist 2>&1 | tee -a ../../e2e.log
+          echo "Signing with the latest Kotlin SDK: $(ls build/install/tesser-signer/lib | grep -E '^sdk-[0-9]')"
+      - name: Unit tests that run the Kotlin signer
+        if: ${{ !cancelled() && steps.signer.outcome == 'success' }}
+        shell: bash
+        run: bun test src/setup/kotlin-signer.test.ts 2>&1 | tee -a e2e.log
+        env:
+          REQUIRE_KOTLIN_SIGNER: "1"
       - name: Run outbound E2E
-        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.demo.outcome != 'skipped' && steps.signer.outcome == 'success' }}
         # Above its tests' timeouts (12 + 2 × 11 min), so a slow run still prints its failure.
         timeout-minutes: 40
         shell: bash
@@ -93,10 +104,10 @@ jobs:
         run: |
           if [ -f e2e.log ]; then
             log=$(sed -E 's/\x1b\[[0-9;]*m//g' e2e.log)
-            reason=$(grep -E -A8 'Demo failed:|\(fail\)|^error:' <<<"$log" | head -30 || true)
+            reason=$(grep -E -A8 'Demo failed:|\(fail\)|^error:|^e: |^FAILURE:' <<<"$log" | head -30 || true)
             [ -n "$reason" ] || reason=$(tail -15 <<<"$log")
           else
-            reason="Failed before the E2E ran (install, typecheck, signer build or unit tests)."
+            reason="Failed before the E2E ran (install, typecheck or unit tests)."
           fi
           # Slack doesn't mask secrets the way the Actions log does.
           for secret in "$TESSER_CLIENT_ID" "$TESSER_CLIENT_SECRET" "$CIRCLE_API_KEY" "$BENEFICIARY_WALLET_ADDRESS" "$SIGNING_PRIVATE_KEY"; do
