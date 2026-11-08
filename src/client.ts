@@ -1,4 +1,5 @@
-const BASE_URL = process.env.TESSER_BASE_URL || "https://sandbox.tesserx.co";
+/** The Tesser API this run talks to, from `TESSER_BASE_URL` (default: sandbox). */
+export const apiBaseUrl = () => process.env.TESSER_BASE_URL || "https://sandbox.tesserx.co";
 const AUTH_URL =
   process.env.TESSER_AUTH_URL ||
   "https://dev-awqy75wdabpsnsvu.us.auth0.com/oauth/token";
@@ -79,7 +80,7 @@ export async function authenticate(): Promise<string> {
   }
 
   if (DEBUG) {
-    console.log("[DEBUG] POST", AUTH_URL, { client_id: CLIENT_ID, audience: BASE_URL, grant_type: "client_credentials" });
+    console.log("[DEBUG] POST", AUTH_URL, { client_id: CLIENT_ID, audience: apiBaseUrl(), grant_type: "client_credentials" });
   }
 
   const res = await fetch(AUTH_URL, {
@@ -88,7 +89,7 @@ export async function authenticate(): Promise<string> {
     body: new URLSearchParams({
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      audience: BASE_URL,
+      audience: apiBaseUrl(),
       grant_type: "client_credentials",
     }),
   });
@@ -114,7 +115,7 @@ async function request<T>(
 ): Promise<T> {
   if (!token) throw new Error("Not authenticated — call authenticate() first");
 
-  const url = `${BASE_URL}${path}`;
+  const url = `${apiBaseUrl()}${path}`;
   const serialized = body === undefined ? undefined : JSON.stringify(body);
   if (DEBUG) console.log(`[DEBUG] ${method}`, url, ...(body === undefined ? [] : [body]));
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
 import { throwawayApiKey } from "../testing/api-key.ts";
 import type { Payment, Step } from "../types.ts";
@@ -49,9 +49,48 @@ describe("signWithKotlinSdk on an incomplete step", () => {
 // Skipped only while the signer isn't built; CI always builds it first.
 const signerBuilt = await Bun.file(KOTLIN_SIGNER).exists();
 
+// What Tesser's unsigned-payload endpoint serves: the creation the SDK must stamp unchanged.
+const servedCreation = JSON.stringify({
+  type: "ACTIVITY_TYPE_CREATE_WALLET_ACCOUNTS",
+  timestampMs: "1",
+  organizationId: "sub-org-1",
+  parameters: {
+    walletId: "master-wallet",
+    accounts: [
+      {
+        curve: "CURVE_SECP256K1",
+        pathFormat: "PATH_FORMAT_BIP32",
+        path: "m/44'/60'/1'/0/2",
+        addressFormat: "ADDRESS_FORMAT_ETHEREUM",
+        name: "E2E outbound run-1",
+      },
+    ],
+  },
+});
+const payloadRequests: URL[] = [];
+let tesser: ReturnType<typeof Bun.serve>;
+const savedBaseUrl = process.env.TESSER_BASE_URL;
+
 describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
+  // The JVM calls Tesser over the network, so it gets a real local server rather than the fetch spy.
+  beforeAll(() => {
+    tesser = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname !== "/v1/accounts/wallets/unsigned-payload") return new Response("Not found", { status: 404 });
+        payloadRequests.push(url);
+        return Response.json({ data: { body: servedCreation } });
+      },
+    });
+  });
+  afterAll(() => tesser.stop());
+
   beforeEach(async () => {
     requests.length = 0;
+    payloadRequests.length = 0;
+    process.env.TESSER_BASE_URL = `http://127.0.0.1:${tesser.port}`;
     process.env.TESSER_CLIENT_ID ||= "test";
     process.env.TESSER_CLIENT_SECRET ||= "test";
     const keys = await throwawayApiKey();
@@ -77,6 +116,8 @@ describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
   afterEach(() => {
     fetchSpy.mockRestore();
     for (const name of SIGNING_VARIABLES) delete process.env[name];
+    if (savedBaseUrl === undefined) delete process.env.TESSER_BASE_URL;
+    else process.env.TESSER_BASE_URL = savedBaseUrl;
   });
 
   test("signs the step's transaction with the source wallet's address from the API", async () => {
@@ -91,10 +132,11 @@ describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
     expect(stampPublicKey).toBe(publicKey);
   });
 
-  test("creates a managed wallet with the creation the Kotlin SDK stamps for its name", async () => {
+  test("creates a managed wallet with the creation Tesser builds for its name, stamped by the Kotlin SDK", async () => {
     const wallet = await createWalletWithKotlinSdk("E2E outbound run-1");
 
     expect(wallet.id).toBe("new-wallet");
+    expect(payloadRequests.map((url) => url.searchParams.get("name"))).toEqual(["E2E outbound run-1"]);
     expect(requests).toEqual([
       {
         method: "POST",
@@ -102,10 +144,8 @@ describe.skipIf(!signerBuilt && !process.env.CI)("the Kotlin signer", () => {
         body: { name: "E2E outbound run-1", type: "stablecoin_ethereum", is_managed: true, signature: expect.any(String) },
       },
     ]);
-    const { body, rawBody, stampPublicKey } = decodeSignature((requests[0]!.body as { signature: string }).signature);
-    expect(body.type).toStartWith("ACTIVITY_TYPE_CREATE_WALLET");
-    expect(body.organizationId).toBe("sub-org-1");
-    expect(rawBody).toContain('"E2E outbound run-1"');
+    const { rawBody, stampPublicKey } = decodeSignature((requests[0]!.body as { signature: string }).signature);
+    expect(rawBody).toBe(servedCreation);
     expect(stampPublicKey).toBe(publicKey);
   });
 

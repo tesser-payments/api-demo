@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { createManagedEvmWallet } from "../api/accounts.ts";
-import { get } from "../client.ts";
+import { apiBaseUrl, get } from "../client.ts";
 import type { Account, Envelope, Payment, Step } from "../types.ts";
 
 /** Where the signer reads its Turnkey API key from. */
@@ -56,13 +56,12 @@ export async function runKotlinSigner<C extends keyof SignerInputs>(command: C, 
   return signature.trim();
 }
 
-// Only what the JVM needs to start and sign: the API credentials stay out of it.
+// Only what the JVM needs to start, sign and reach the same API: the API credentials stay out of it.
 function signerEnvironment(): Record<string, string> {
   const names = ["PATH", "JAVA_HOME", ...SIGNING_VARIABLES];
-  return Object.fromEntries(
-    names.flatMap((name) => {
-      const value = process.env[name];
-      return value ? [[name, value]] : [];
-    }),
-  );
+  const passed = names.flatMap((name) => {
+    const value = process.env[name];
+    return value ? [[name, value]] : [];
+  });
+  return { ...Object.fromEntries(passed), TESSER_BASE_URL: apiBaseUrl() };
 }
