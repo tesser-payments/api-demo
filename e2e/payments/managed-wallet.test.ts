@@ -1,9 +1,10 @@
 import { beforeAll, expect, test } from "bun:test";
 import { authenticate } from "../../src/client.ts";
-import { assertBalanceHolds, getAvailableBalance, waitForBalance } from "../../src/api/accounts.ts";
+import { assertBalanceHolds, findMasterWallet, getAvailableBalance, waitForBalance } from "../../src/api/accounts.ts";
 import { createPayment, simulateInbound } from "../../src/api/payments.ts";
+import { createRebalance, getRebalance } from "../../src/api/rebalances.ts";
 import { createWalletWithKotlinSdk, signWithKotlinSdk } from "../../src/setup/kotlin-signer.ts";
-import { waitForPayment } from "../../src/steps.ts";
+import { waitForPayment, waitForRebalance } from "../../src/steps.ts";
 import type { Account, MockedRiskStatus, RiskStatus } from "../../src/types.ts";
 import { findOrCreateBeneficiaryWallet, findOrCreateOriginatorBank, requireKotlinSigner } from "../preflight.ts";
 
@@ -11,6 +12,7 @@ import { findOrCreateBeneficiaryWallet, findOrCreateOriginatorBank, requireKotli
 const CREATE_TIMEOUT_MS = 2 * 60_000;
 const INBOUND_TIMEOUT_MS = 12 * 60_000;
 const PAYOUT_TIMEOUT_MS = 11 * 60_000;
+const REBALANCE_TIMEOUT_MS = 12 * 60_000;
 const PAYMENT_TIMEOUT_MS = 5 * 60_000;
 const BALANCE_HOLD_MS = 30_000;
 // Polygon Amoy finalizes within seconds, and the outbound risk-test addresses work on it.
@@ -18,6 +20,7 @@ const NETWORK = "POLYGON_AMOY";
 // simulate-inbound always sends exactly 1 USDC.
 const INBOUND_AMOUNT = 1;
 const PAYOUT_AMOUNT = 0.1;
+const REBALANCE_AMOUNT = 0.5;
 const RUN_ID = crypto.randomUUID().slice(0, 8);
 const ORIGINATOR_NAME = "E2E outbound originator";
 
@@ -46,16 +49,20 @@ const payouts: { beneficiary: string; walletName: string; address: string; final
 
 let originatorBankId: string;
 const beneficiaryWalletIds = new Map<string, string>();
+// The workspace's first managed wallet; it only ever receives, so no run has to sign for it.
+let masterWallet: Account;
 // Created by the first test; every later test receives into or pays from it.
 let runWallet: Account | undefined;
 
 beforeAll(async () => {
   await requireKotlinSigner();
   await authenticate();
-  const [bankId, ...walletIds] = await Promise.all([
+  const [master, bankId, ...walletIds] = await Promise.all([
+    findMasterWallet(),
     findOrCreateOriginatorBank(ORIGINATOR_NAME),
     ...payouts.map(({ walletName, address }) => findOrCreateBeneficiaryWallet({ name: walletName, address })),
   ]);
+  masterWallet = master;
   originatorBankId = bankId;
   payouts.forEach(({ walletName }, i) => beneficiaryWalletIds.set(walletName, walletIds[i]!));
 });
@@ -155,4 +162,56 @@ test.each(payouts)(
     await assertBalanceHolds({ ...balance, amount: debited, holdMs: BALANCE_HOLD_MS });
   },
   PAYOUT_TIMEOUT_MS,
+);
+
+test(
+  "USDC is rebalanced from that wallet to the workspace's master wallet once its step is signed with the Kotlin SDK",
+  async () => {
+    const wallet = requireRunWallet();
+    const source = { accountId: wallet.id, currency: "USDC", network: NETWORK };
+    const destination = { accountId: masterWallet.id, currency: "USDC", network: NETWORK };
+    const [sourceBalance, destinationBalance] = await Promise.all([getAvailableBalance(source), getAvailableBalance(destination)]);
+    const debited = exactly(parseFloat(sourceBalance) - REBALANCE_AMOUNT);
+    const credited = exactly(parseFloat(destinationBalance) + REBALANCE_AMOUNT);
+
+    const created = await createRebalance({
+      fromAccountId: wallet.id,
+      toAccountId: masterWallet.id,
+      amount: String(REBALANCE_AMOUNT),
+      currency: "USDC",
+      network: NETWORK,
+      reference: `e2e-${RUN_ID}-rebalance`,
+    });
+    expect(created.direction).toBe("rebalance");
+    expect(created.balance_status).toBe("unreserved");
+    expect(created.balance_reserved_at).toBeNull();
+    expect(created.steps).toEqual([]);
+    expect(created.desired.from.account_id).toBe(wallet.id);
+    expect(created.desired.to.account_id).toBe(masterWallet.id);
+    expect(parseFloat(created.desired.from.amount ?? "0")).toBe(REBALANCE_AMOUNT);
+
+    await waitForRebalance(created.id, { sign: signWithKotlinSdk, timeoutMs: PAYMENT_TIMEOUT_MS });
+    const rebalance = await getRebalance(created.id);
+
+    // The balance check runs when the signature is accepted.
+    expect(rebalance.balance_status).toBe("reserved");
+    expect(rebalance.balance_reserved_at).toBeTruthy();
+    expect(rebalance.steps.map((s) => `${s.step_type}:${s.status}`)).toEqual(["transfer:completed"]);
+    const [transfer] = rebalance.steps;
+    expect(transfer?.transaction_hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(transfer?.completed_at).toBeTruthy();
+    for (const [leg, accountId] of [["from", wallet.id], ["to", masterWallet.id]] as const) {
+      expect(rebalance.actual[leg].account_id).toBe(accountId);
+      expect(rebalance.actual[leg].network).toBe(NETWORK);
+      expect(rebalance.actual[leg].currency).toBe("USDC");
+      expect(parseFloat(rebalance.actual[leg].amount ?? "0")).toBe(REBALANCE_AMOUNT);
+    }
+    // Exactly once on the master wallet: the platform must not also count the transfer as an inbound payment.
+    await waitForBalance({ ...destination, amount: credited });
+    await Promise.all([
+      assertBalanceHolds({ ...source, amount: debited, holdMs: BALANCE_HOLD_MS }),
+      assertBalanceHolds({ ...destination, amount: credited, holdMs: BALANCE_HOLD_MS }),
+    ]);
+  },
+  REBALANCE_TIMEOUT_MS,
 );

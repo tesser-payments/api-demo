@@ -166,6 +166,23 @@ export async function post<T = unknown>(
 }
 
 /**
+ * POST a body carrying a signature. A signature authorizes moving the wallet's
+ * funds, so it is cut from the error, which quotes the request body.
+ */
+export async function postSignature<T = unknown>(
+  path: string,
+  body: { signature: string; [field: string]: unknown },
+  opts: { idempotencyKey: string },
+): Promise<T> {
+  try {
+    return await post<T>(path, body, opts);
+  } catch (error) {
+    if (error instanceof Error && body.signature) error.message = error.message.replaceAll(body.signature, "<redacted>");
+    throw error;
+  }
+}
+
+/**
  * Paginated GET — fetches all pages and returns a flat array.
  */
 export async function getAll<T>(path: string): Promise<T[]> {

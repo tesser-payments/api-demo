@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
-import { assertBalanceHolds, findCounterpartyAccount, waitForBalance } from "./accounts.ts";
+import { assertBalanceHolds, findCounterpartyAccount, findMasterWallet, waitForBalance } from "./accounts.ts";
 
 let fetchSpy: ReturnType<typeof spyOn>;
 
@@ -56,6 +56,30 @@ describe("findCounterpartyAccount", () => {
       wallet("b", "E2E outbound originator", { counterparty_id: "c2" }),
     ]);
     await expect(findCounterpartyAccount(query)).rejects.toThrow("2 counterparty accounts");
+  });
+});
+
+describe("findMasterWallet", () => {
+  const managed = (id: string, created_at: string, owner: { tenant_id?: string; counterparty_id?: string } = {}) => ({
+    ...wallet(id, `wallet ${id}`, owner),
+    is_managed: true,
+    created_at,
+  });
+
+  test("returns the workspace's oldest managed EVM wallet", async () => {
+    await serve([
+      managed("newer", "2026-11-08T10:00:00.000Z"),
+      managed("tenant", "2026-01-01T00:00:00.000Z", { tenant_id: "t1" }),
+      managed("signup", "2026-02-01T00:00:00.000Z"),
+      { ...managed("unmanaged", "2026-01-01T00:00:00.000Z"), is_managed: false },
+    ]);
+    expect((await findMasterWallet()).id).toBe("signup");
+    expect(listed[0]).toContain("/v1/accounts?type=stablecoin_ethereum&is_managed=true&entity_type=sub_org");
+  });
+
+  test("throws when the workspace has no managed EVM wallet", async () => {
+    await serve([]);
+    await expect(findMasterWallet()).rejects.toThrow("no managed EVM wallet");
   });
 });
 

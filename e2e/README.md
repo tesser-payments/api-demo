@@ -36,10 +36,11 @@ A USD wire is minted into USDC through Circle Mint and paid out to a wallet. It 
 
 ## Managed wallet (`payments/managed-wallet.test.ts`, CI job `managed-wallet`)
 
-A managed wallet created with the Tesser Kotlin SDK receives USDC and pays it out, with every payment step signed by the SDK as the "Sign a Wallet Step" guide describes. The signer builds against the latest published SDK release, so a release that breaks creating a wallet or signing fails this job.
+A managed wallet created with the Tesser Kotlin SDK receives USDC, pays it out and rebalances some to the workspace's master wallet, with every wallet step signed by the SDK as the "Sign a Wallet Step" guide describes. The signer builds against the latest published SDK release, so a release that breaks creating a wallet or signing fails this job.
 
 **Before the cases**, the test:
 - signs a throwaway step locally with the Kotlin signer, so a missing build, Java runtime or signing key fails before any payment;
+- finds the workspace's master wallet: its oldest managed EVM wallet with no tenant or counterparty, the one created at signup;
 - finds, or creates on first use, the originator `E2E outbound originator` (a business counterparty whose bank account is each payout's `funding_account_id`) and the two beneficiaries' unmanaged wallets.
 
 The cases run in this order, each building on the one before:
@@ -51,8 +52,9 @@ The cases run in this order, each building on the one before:
 | 3 | USDC from a sender held for review and approved is credited to that wallet's new address and completes | Same, with risk `awaiting_decision`; the test approves the review | Same checks, ending `manually_approved` |
 | 4 | USDC to an automatically approved beneficiary is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0xd3f72b3e91c8124dfc1b4273e93594bb00c9be6f`; signs the step's `unsigned_transaction` with the SDK | The payment is `outbound`, funded by the originator's bank, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.1). The balance drops by exactly 0.1 (reserved at signing; gas is sponsored) and stays put for 30 s |
 | 5 | USDC to a beneficiary held for review and approved is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0x0a5b2bf3ccfb44c1d22f07eed9553ecba752d4ad`; the test approves the review, then signs | Same checks, ending `manually_approved` |
+| 6 | USDC is rebalanced from that wallet to the workspace's master wallet once its step is signed with the Kotlin SDK | Rebalances 0.5 USDC with `POST /v1/treasury/rebalances`; signs the step's `unsigned_transaction` with the SDK | The create response is a `rebalance`, `unreserved`, with no steps yet. At the end, `GET /v1/treasury/rebalances/{id}` shows it `reserved` with `balance_reserved_at`, one `completed` `transfer` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.5) on both sides. The wallet drops by exactly 0.5 and the master wallet rises by exactly 0.5, so the platform didn't also count the transfer as an inbound; both stay put for 30 s |
 
-Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1), compared to all 6 decimals; from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8. Every run leaves 1.8 test USDC in its wallet. Both inbounds come from the platform's single faucet wallet, which doesn't queue nonces, which is why all cases run one at a time in this one file. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
+Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1, −0.5), compared to all 6 decimals; from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8 → 1.3. Every run leaves 1.3 test USDC in its wallet and adds 0.5 to the master wallet. Case 6 also checks the master wallet's exact balance, so it fails if anything else moves that wallet's USDC on Polygon Amoy during the run. Both inbounds come from the platform's single faucet wallet, which doesn't queue nonces, which is why all cases run one at a time in this one file. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
 
 ## Not covered
 
@@ -62,4 +64,4 @@ On purpose, so these gaps are decisions rather than surprises:
 - **Other networks.** The Circle payout runs on `PAYMENT_NETWORK` and the managed wallet test on Polygon Amoy only; Ethereum Sepolia, Base Sepolia and Tempo aren't exercised.
 - **The TypeScript and Java SDKs.** Only the Kotlin SDK signs.
 - **Webhooks.** The tests poll the API instead.
-- **Withdrawals, rebalances and the Travel Rule.**
+- **Withdrawals, rebalances that involve a ledger, and the Travel Rule.**

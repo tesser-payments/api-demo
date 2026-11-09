@@ -56,19 +56,19 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | Path | What it holds |
 |------|---------------|
 | `index.ts` | The demo flow above, built from `src/api/` |
-| `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`), shared by the demo and the E2E tests |
-| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) and `kotlin-signer.ts` (create a managed wallet and sign a payment step with the Kotlin SDK through `signers/kotlin`) |
+| `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`, `rebalances`), shared by the demo and the E2E tests |
+| `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) and `kotlin-signer.ts` (create a managed wallet and sign a payment or rebalance step with the Kotlin SDK through `signers/kotlin`) |
 | `signers/kotlin/` | `tesser-signer <sign-step\|create-wallet>`: a Gradle CLI around the latest published Tesser Kotlin SDK (`xyz.tesser:sdk:latest.release`), the SDK customers run, so a release that breaks creating or signing fails the E2E. Request JSON on stdin, `signature` on stdout, key from `SIGNING_*`. `create-wallet` fetches the creation body from `TESSER_BASE_URL` (`GET /v1/accounts/wallets/unsigned-payload`, from SDK 0.1.0) and stamps it unchanged. `bun run build:signer` installs it; its tests run with `./gradlew test` |
 | `src/testing/` | Helpers only tests use, e.g. a throwaway Turnkey API key |
 | `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
 | `e2e/` | E2E tests, one folder per endpoint and one file per provider path; `bun run e2e`. `bun test` runs only `src/` (see `bunfig.toml`). `e2e/README.md` describes every case in plain words |
-| `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
+| `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `postSignature` (a `post` that cuts the body's signature from its error), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
 | `src/retry.ts` | `isTransient`, `retryOpts`, `postWithRetry`, `poll` (defaults: 60 attempts, 10 s apart) |
-| `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment` |
-| `src/types.ts` | snake_case wire types for accounts, deposits, payments, steps |
+| `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment`, `waitForRebalance`; both sign requested steps through one shared signer |
+| `src/types.ts` | snake_case wire types for accounts, deposits, payments, rebalances, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`) and `managed-wallet` (Kotlin signer build and tests, then the managed wallet E2E; a broken SDK release fails only this job, but then no inbound or outbound case runs), then `report` (one Slack message for every failed job, from the redacted reason artifacts each failed job saves with `.github/scripts/`; job outputs can't carry them because GitHub drops outputs containing a secret's value). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
+| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`) and `managed-wallet` (Kotlin signer build and tests, then the managed wallet E2E; a broken SDK release fails only this job, but then none of its cases run), then `report` (one Slack message for every failed job, from the redacted reason artifacts each failed job saves with `.github/scripts/`; job outputs can't carry them because GitHub drops outputs containing a secret's value). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
@@ -80,8 +80,8 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 - **Payments:** wait with `waitForPayment(id, { decide?, reason?, sign? })`. `sign(step, payment)` returns the `signature` for a `signature_requested` step; it is called once per transaction, again only after a transient error, and any other error fails the wait; the E2E passes `signWithKotlinSdk`. Success is every step `completed`; a `failed` step or a `*_rejected` risk status throws.
 - **Deposits:** give each deposit its own random amount; Circle matches a simulated wire to its deposit by exact amount. Tag deposits and payments with `organization_reference_id` (`e2e-<RUN_ID>-<variant>-…`).
 - **Fail before calling the API** on bad configuration (see `payoutConfig`).
-- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key, a managed wallet's Turnkey signature and a step's signature) and the auth response. Step 1.5 redacts the key from its error, `createManagedEvmWallet` the wallet signature and `submitStepSignature` the step signature. The Kotlin signer gets only `PATH`, `JAVA_HOME`, `SIGNING_*` and `TESSER_BASE_URL`, never the API credentials. CI logs of this public repo are public.
-- **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the managed wallet E2E, which creates its wallet each run).
+- **Secrets:** never print secret values. `DEBUG_MODE` logs request bodies (including the Circle key, a managed wallet's Turnkey signature and a step's signature) and the auth response. Step 1.5 redacts the key from its error, and `postSignature` the signature from the errors of `createManagedEvmWallet`, `submitStepSignature` and `submitRebalanceStepSignature`. The Kotlin signer gets only `PATH`, `JAVA_HOME`, `SIGNING_*` and `TESSER_BASE_URL`, never the API credentials. CI logs of this public repo are public.
+- **Balances:** a test that checks an exact balance uses a wallet nothing else touches (see the managed wallet E2E, which creates its wallet each run). The one exception is its rebalance case, which checks the master wallet's exact credit, so it fails if anything else moves that wallet's USDC on the same network during the run.
 - **The managed wallet E2E's signing key** (`STAGING_SIGNING_*` in CI) can create and sign for any wallet in the workspace's sub-organization, since the test creates a new wallet every run. Never print it or the step signatures.
 - **Public repo:** keep internal ids, organization names and private URLs out of commits and code.
 
@@ -107,6 +107,7 @@ The flow only passes when the organization's Circle setup is complete. None of t
 - Creating a managed wallet needs a signature stamped with the workspace's Turnkey key. With the Kotlin SDK 0.1.0+, `signCreateWallet` fetches the body from `GET /v1/accounts/wallets/unsigned-payload` (an address on the workspace's master wallet) and stamps it unchanged.
 - `simulate-inbound` sends from one faucet wallet without queuing nonces, so two sends at once can collide: keep every `simulate-inbound` in one test file, one at a time.
 - A payment from a managed wallet asks for a signature per wallet step (`signature_requested`, with `unsigned_transaction`). The sign request reserves the amount, so `available_balance` drops right then; gas is sponsored, so only the payout leaves the wallet.
+- A rebalance between two managed wallets asks for a signature the same way, at `/v1/treasury/rebalances/{id}/steps/{stepId}/sign` (`treasury-3013` once the step is no longer signable). Signing reserves the amount (`balance_status: reserved`); the destination is credited once the step completes, and the platform doesn't also book the transfer as an inbound.
 - `funding_account_id` must belong to a counterparty or tenant (`payments-3099`). A payment from a workspace-owned wallet names a counterparty's bank account as its funding account (the Travel Rule originator).
 
 ### Verifying a change
