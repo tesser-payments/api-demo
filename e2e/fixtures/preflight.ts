@@ -1,23 +1,11 @@
-import { createCounterpartyBank, createUnmanagedWallet, findCounterpartyAccount } from "../src/api/accounts.ts";
-import { createBusinessCounterparty, createIndividualCounterparty } from "../src/api/entities.ts";
-import { findCircleMasterLedger, findCircleWireBank, storeCircleKey } from "../src/setup/circle.ts";
-import { runKotlinSigner, SIGNING_VARIABLES } from "../src/setup/kotlin-signer.ts";
+import { createCounterpartyBank, createUnmanagedWallet, findCounterpartyAccount } from "../../src/api/accounts.ts";
+import { createBusinessCounterparty, createIndividualCounterparty } from "../../src/api/entities.ts";
+import { runKotlinSigner, SIGNING_VARIABLES } from "../../src/setup/kotlin-signer.ts";
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required for the E2E tests`);
   return value;
-}
-
-/**
- * Connect Circle and check the setup that can't be done through the Tesser
- * API, so a broken environment fails here instead of as a timeout mid-flow.
- */
-export async function prepareCircle(): Promise<void> {
-  const apiKey = requireEnv("CIRCLE_API_KEY");
-  await storeCircleKey(apiKey);
-  await findCircleMasterLedger();
-  await findCircleWireBank(apiKey);
 }
 
 /** Sign a throwaway step locally, so a missing build, JVM or key fails before any payment is created. */
