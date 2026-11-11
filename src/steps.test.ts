@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { authenticate } from "./client.ts";
-import { assertNoFailedStep, stepSummary, waitForPayment } from "./steps.ts";
-import type { Payment, RiskStatus, Step, StepStatus } from "./types.ts";
+import { assertNoFailedStep, stepSummary, waitForPayment, waitForRebalance } from "./steps.ts";
+import type { BalanceStatus, Payment, Rebalance, RiskStatus, Step, StepStatus } from "./types.ts";
 
 const leg = { account_id: null, amount: null, currency: null, network: null };
 const overlay = { from: leg, to: leg };
@@ -34,6 +34,21 @@ const payment = (risk_status: RiskStatus, steps: Step[]): Payment => ({
   expires_at: null,
 });
 
+const rebalance = (balance_status: BalanceStatus, steps: Step[]): Rebalance => ({
+  id: "r1",
+  workspace_id: "w1",
+  direction: "rebalance",
+  desired: overlay,
+  estimated: overlay,
+  actual: overlay,
+  balance_status,
+  balance_reserved_at: null,
+  steps,
+  created_at: "",
+  updated_at: "",
+  expires_at: null,
+});
+
 let logSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
 const reviews: { body: unknown; key: string | undefined }[] = [];
@@ -41,8 +56,8 @@ const signs: { path: string; body: unknown; key: string | undefined }[] = [];
 // What the sign endpoint answers, in order; 200 once they run out.
 const signResponses: { status: number; code?: string }[] = [];
 
-// Auth, then each GET returns the next payment state; review and sign POSTs are recorded.
-async function serve(...states: Payment[]) {
+// Auth, then each GET returns the next state; review and sign POSTs are recorded.
+async function serve(...states: (Payment | Rebalance)[]) {
   fetchSpy.mockImplementation(async (url: unknown, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     if (!headers.Authorization) return Response.json({ access_token: "t" });
@@ -240,5 +255,51 @@ describe("waitForPayment signing", () => {
 
     expect(error.message).toContain("/v1/payments/p1/steps/s1/sign failed (400)");
     expect(error.message).not.toContain("signature-secret");
+  });
+});
+
+describe("waitForRebalance", () => {
+  const awaitingSignature = () => rebalance("unreserved", [step("signature_requested", { unsigned_transaction: "0x02aa" })]);
+
+  test("signs a step that asks for a signature once, at the rebalance step's sign endpoint, and returns once every step is completed", async () => {
+    await serve(awaitingSignature(), awaitingSignature(), rebalance("reserved", [step("completed")]));
+    const sign = mock(async () => "signature-1");
+
+    const result = await waitForRebalance("r1", { ...fast, sign });
+
+    expect(result.balance_status).toBe("reserved");
+    expect(sign).toHaveBeenCalledTimes(1);
+    const [signedStep, signedRebalance] = sign.mock.calls[0] as unknown as [Step, Rebalance];
+    expect(signedStep.unsigned_transaction).toBe("0x02aa");
+    expect(signedRebalance.id).toBe("r1");
+    expect(signs).toEqual([
+      { path: "/v1/treasury/rebalances/r1/steps/s1/sign", body: { signature: "signature-1" }, key: expect.any(String) },
+    ]);
+  });
+
+  test("counts a resent signature as submitted when the platform already took the first one", async () => {
+    signResponses.push({ status: 502 }, { status: 400, code: "treasury-3013" });
+    await serve(awaitingSignature(), awaitingSignature(), awaitingSignature(), rebalance("reserved", [step("completed")]));
+    const sign = mock(async () => "signature-1");
+
+    const result = await waitForRebalance("r1", { ...fast, sign });
+
+    expect(result.steps[0]!.status).toBe("completed");
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(signs).toHaveLength(2);
+  });
+
+  test("a failed step fails at once with its reasons", async () => {
+    await serve(
+      rebalance("reserved", [step("failed", { status_reasons: [{ error_code: "transfers-9313", error_message: "reverted" }] })]),
+    );
+    await expect(waitForRebalance("r1", fast)).rejects.toThrow("Rebalance step 1 failed: transfers-9313: reverted");
+  });
+
+  test("without sign, a timeout names the rebalance's last state and says a step is waiting for a signature", async () => {
+    await serve(awaitingSignature());
+    await expect(waitForRebalance("r1", { timeoutMs: 50, intervalMs: 1 })).rejects.toThrow(
+      "last seen balance=unreserved  step1=signature_requested; a step is waiting for a signature; pass sign",
+    );
   });
 });

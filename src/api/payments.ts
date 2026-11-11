@@ -1,4 +1,4 @@
-import { getAll, post } from "../client.ts";
+import { getAll, post, postSignature } from "../client.ts";
 import { poll, postWithRetry } from "../retry.ts";
 import type { Envelope, MockedRiskStatus, Payment, SimulatedInboundPending } from "../types.ts";
 
@@ -44,8 +44,8 @@ export async function createPayment({
 }
 
 /**
- * Submit the signature for a wallet step. Plain `post` with the caller's key, so a
- * retry resends the same signature under the same key.
+ * Submit the signature for a wallet step. Not retried here, so a retry by the
+ * caller resends the same signature under the same key.
  */
 export async function submitStepSignature({
   paymentId,
@@ -58,13 +58,7 @@ export async function submitStepSignature({
   signature: string;
   idempotencyKey: string;
 }): Promise<void> {
-  try {
-    await post(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
-  } catch (error) {
-    // The request body is in the error message; a signature authorizes moving the wallet's funds.
-    if (error instanceof Error && signature) error.message = error.message.replaceAll(signature, "<redacted>");
-    throw error;
-  }
+  await postSignature(`/v1/payments/${paymentId}/steps/${stepId}/sign`, { signature }, { idempotencyKey });
 }
 
 /**

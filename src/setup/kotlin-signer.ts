@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { createManagedEvmWallet, getAccount } from "../api/accounts.ts";
 import { apiBaseUrl } from "../client.ts";
-import type { Account, Payment, Step } from "../types.ts";
+import type { Account, Payment, Rebalance, Step } from "../types.ts";
 
 export const SIGNING_VARIABLES = ["SIGNING_PUBLIC_KEY", "SIGNING_PRIVATE_KEY", "SIGNING_ENCLAVE_ID"] as const;
 
@@ -20,8 +20,11 @@ export async function createWalletWithKotlinSdk(name: string): Promise<Account> 
   return createManagedEvmWallet({ name, signature });
 }
 
-/** Sign a payment step with the Kotlin SDK; `signWith` is its `estimated.from.account_id`'s address, as the guide says. */
-export async function signWithKotlinSdk(step: Step, payment: Payment): Promise<string> {
+/**
+ * Sign a payment's or rebalance's step with the Kotlin SDK; `signWith` is its
+ * `estimated.from.account_id`'s address, as the guide says.
+ */
+export async function signWithKotlinSdk(step: Step, transfer: Pick<Payment | Rebalance, "id">): Promise<string> {
   const { account_id: sourceAccountId, network } = step.estimated.from;
   if (!step.unsigned_transaction) throw new Error(`Step ${step.id} has no unsigned transaction to sign`);
   if (!network) throw new Error(`Step ${step.id} has no source network to sign for`);
@@ -31,7 +34,7 @@ export async function signWithKotlinSdk(step: Step, payment: Payment): Promise<s
 
   return runKotlinSigner("sign-step", {
     id: step.id,
-    transferId: payment.id,
+    transferId: transfer.id,
     unsignedTransaction: step.unsigned_transaction,
     signWith: source.crypto_wallet_address,
     network,

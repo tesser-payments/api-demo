@@ -1,4 +1,4 @@
-import { get, getAll, post } from "../client.ts";
+import { get, getAll, post, postSignature } from "../client.ts";
 import type { Payout } from "../payout.ts";
 import { isTransient, poll } from "../retry.ts";
 import type { Account, AccountType, Envelope } from "../types.ts";
@@ -98,17 +98,22 @@ export async function createUnmanagedWallet({
  * can follow a wallet Turnkey already created, and retries would log the signature.
  */
 export async function createManagedEvmWallet({ name, signature }: { name: string; signature: string }): Promise<Account> {
-  try {
-    const wallet = await post<Envelope<Account>>(
-      "/v1/accounts/wallets",
-      { name, type: "stablecoin_ethereum", is_managed: true, signature },
-      { idempotencyKey: crypto.randomUUID() },
-    );
-    return wallet.data;
-  } catch (err) {
-    if (err instanceof Error && signature) err.message = err.message.replaceAll(signature, "<redacted>");
-    throw err;
-  }
+  const wallet = await postSignature<Envelope<Account>>(
+    "/v1/accounts/wallets",
+    { name, type: "stablecoin_ethereum", is_managed: true, signature },
+    { idempotencyKey: crypto.randomUUID() },
+  );
+  return wallet.data;
+}
+
+/** The workspace's first managed EVM wallet, created at signup: the first address of its master wallet. */
+export async function findMasterWallet(): Promise<Account> {
+  const listed = await getAll<Account>("/v1/accounts?type=stablecoin_ethereum&is_managed=true&entity_type=sub_org");
+  const [master] = listed
+    .filter((a) => a.is_managed && !a.tenant_id && !a.counterparty_id)
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
+  if (!master) throw new Error("The workspace has no managed EVM wallet to use as its master wallet");
+  return master;
 }
 
 /**

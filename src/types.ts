@@ -72,7 +72,7 @@ export interface StatusReason {
   error_message: string;
 }
 
-/** A payment or deposit step; both share this shape. */
+/** A payment, deposit or rebalance step; all share this shape. */
 export interface Step {
   id: string;
   step_sequence: number;
@@ -104,6 +104,23 @@ export interface Payment {
   actual: Overlay;
   risk_status: RiskStatus | null;
   balance_status: BalanceStatus | null;
+  steps: Step[];
+  created_at: string;
+  updated_at: string;
+  expires_at: string | null;
+}
+
+/** A move between two of the workspace's own managed accounts. */
+export interface Rebalance {
+  id: string;
+  workspace_id: string;
+  organization_reference_id?: string | null;
+  direction: "rebalance";
+  desired: Overlay;
+  estimated: Overlay;
+  actual: Overlay;
+  balance_status: BalanceStatus;
+  balance_reserved_at: string | null;
   steps: Step[];
   created_at: string;
   updated_at: string;

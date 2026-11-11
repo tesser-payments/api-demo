@@ -154,7 +154,7 @@ bunx tsc --noEmit     # typecheck
 The E2E tests in `e2e/`, case by case, with what each checks and what's deliberately not covered: [e2e/README.md](e2e/README.md).
 
 - `payments/circle-ledger-to-wallet`: a USD wire into a Circle ledger, paid out as USDC to an unmanaged wallet, at org and tenant level.
-- `payments/managed-wallet`: a managed wallet created with the latest Tesser Kotlin SDK receives two inbounds and makes two payouts, each step signed with the SDK. It creates a new wallet on every run, so its signing key can create and sign for any wallet in the workspace.
+- `payments/managed-wallet`: a managed wallet created with the latest Tesser Kotlin SDK receives two inbounds, makes two payouts and rebalances USDC to the workspace's master wallet, each step signed with the SDK. It creates a new wallet on every run, so its signing key can create and sign for any wallet in the workspace.
 
 ---
 
@@ -163,10 +163,10 @@ The E2E tests in `e2e/`, case by case, with what each checks and what's delibera
 This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) runs these jobs against staging:
 
 - `checks`: typecheck and unit tests.
-- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test. A broken SDK release fails only this job, but then none of its inbound or outbound cases run.
+- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet E2E test. A broken SDK release fails only this job, but then none of its cases run.
 - `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
-A full run should take about 6 minutes, most of it the managed wallet job.
+A full run should take about 7 minutes, most of it the managed wallet job.
 
 **Triggers:**
 
