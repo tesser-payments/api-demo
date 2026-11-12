@@ -124,7 +124,7 @@ Each run creates new counterparties, ledgers and wallets in the sandbox workspac
 ### Extending
 
 - **A new API action:** add it to the matching resource file in `src/api/`, built from the helpers above, so the demo and the E2E tests share it.
-- **A new E2E flow:** add `e2e/<flow>/<name>.test.ts` with a `describe` named after its docs page, happy path only, using only `src/` (the public API) and `e2e/fixtures/`. A file on the run's managed wallet gets it from `runWallet()` or `fundedRunWallet(minimum)` and never creates its own; a new folder goes into the `e2e` script in `package.json`, in run order.
+- **A new E2E flow:** add `e2e/<flow>/<name>.test.ts` with a `describe` named after its docs page, happy path only, using only `src/` (the public API) and `e2e/fixtures/`. A file on the run's managed wallet gets it from `runWallet()` or `fundedRunWallet(minimum)` and never creates its own; add a new folder to the `e2e` or `e2e:openfx` script in `package.json`, in run order. Both scripts name `rebalances/` files one by one, so a new file there goes into one of them too.
 - **Any E2E change:** update `e2e/README.md` in the same pull request: each case's title, what it does, what it checks, and the "Not covered" list. The repo is public, so it names no customers, internal ids or private URLs.
 - **A new demo step:** add a `stepN_…` function in `index.ts` that calls `src/api/`, and call it from `runSteps4Through7` (or `main` for one-off setup).
 - **A new payout network:** add its wallet type, default address and address format to `payoutConfig`, update `.env.example` and the README, and verify a live run before making it a default.

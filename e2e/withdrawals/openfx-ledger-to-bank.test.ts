@@ -9,7 +9,8 @@ import { BALANCE_HOLD_MS, exactly, ledgerAsset, openfxAccounts, RUN_ID } from ".
 const WITHDRAWAL_AMOUNT = 105;
 // The bank transfer settles when OpenFX's withdrawal webhook arrives.
 const WITHDRAWAL_WAIT_MS = 30 * 60_000;
-const WITHDRAWAL_TIMEOUT_MS = 32 * 60_000;
+// Above the create's 5 min of retries, the wait and the balance checks.
+const WITHDRAWAL_TIMEOUT_MS = 38 * 60_000;
 
 let ledger: Account;
 let bank: Account;
@@ -71,14 +72,20 @@ describe("Withdraw Funds via a Liquidity Provider", () => {
       expect([from.account_id, from.currency, from.network]).toEqual([ledger.id, "USDC", null]);
       expect([to.account_id, to.currency, to.network]).toEqual([bank.id, "USD", null]);
       expect(parseFloat(from.amount ?? "0")).toBe(WITHDRAWAL_AMOUNT);
-      expect(parseFloat(to.amount ?? "0")).toBe(parseFloat(transfer?.actual.to.amount ?? "0"));
+      const paidOut = parseFloat(transfer?.actual.to.amount ?? "0");
+      expect(paidOut).toBeGreaterThan(0);
+      expect(parseFloat(to.amount ?? "0")).toBe(paidOut);
 
       // The redeemed USD passes through the ledger, so only the USDC leaves it.
       const usdcAfter = exactly(parseFloat(usdcBalance) - WITHDRAWAL_AMOUNT);
-      await waitForBalance({ ...usdc, amount: usdcAfter });
+      const usdAfter = exactly(parseFloat(usdBalance));
+      await Promise.all([
+        waitForBalance({ ...usdc, amount: usdcAfter, falling: true }),
+        waitForBalance({ ...usd, amount: usdAfter, falling: true }),
+      ]);
       await Promise.all([
         assertBalanceHolds({ ...usdc, amount: usdcAfter, holdMs: BALANCE_HOLD_MS }),
-        assertBalanceHolds({ ...usd, amount: exactly(parseFloat(usdBalance)), holdMs: BALANCE_HOLD_MS }),
+        assertBalanceHolds({ ...usd, amount: usdAfter, holdMs: BALANCE_HOLD_MS }),
       ]);
     },
     WITHDRAWAL_TIMEOUT_MS,

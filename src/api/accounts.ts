@@ -164,16 +164,23 @@ export async function getAvailableBalance({ accountId, currency, network }: Bala
 
 /**
  * Wait until the account's available balance in `currency` (and `network`) is
- * exactly `amount`. Throws as soon as it is higher.
+ * exactly `amount`. Throws as soon as it is higher, or lower when `falling`.
  */
-export async function waitForBalance({ amount, ...query }: BalanceQuery & { amount: string }): Promise<string> {
+export async function waitForBalance({
+  amount,
+  falling = false,
+  ...query
+}: BalanceQuery & { amount: string; falling?: boolean }): Promise<string> {
   const { accountId, currency } = query;
   return poll(
     "Account balance",
     async () => {
       const available = await getAvailableBalance(query);
-      if (toMicros(available) > toMicros(amount)) {
+      if (!falling && toMicros(available) > toMicros(amount)) {
         throw new Error(`Account ${accountId} holds ${available} ${currency}, more than the expected ${amount}`);
+      }
+      if (falling && toMicros(available) < toMicros(amount)) {
+        throw new Error(`Account ${accountId} holds ${available} ${currency}, less than the expected ${amount}`);
       }
       return toMicros(available) === toMicros(amount) ? available : undefined;
     },

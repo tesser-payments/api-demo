@@ -8,7 +8,8 @@ import { BALANCE_HOLD_MS, exactly, ledgerAsset, openfxAccounts, RUN_ID } from ".
 // Above OpenFX's minimum trade size, USD 100.
 const SWAP_AMOUNT = 110;
 const SWAP_WAIT_MS = 10 * 60_000;
-const SWAP_TIMEOUT_MS = 12 * 60_000;
+// Above the create's 5 min of retries, the wait and the balance checks.
+const SWAP_TIMEOUT_MS = 18 * 60_000;
 
 let ledger: Account;
 
@@ -62,7 +63,10 @@ describe("Rebalance Funds", () => {
 
       const usdAfter = exactly(parseFloat(usdBalance) - SWAP_AMOUNT);
       const usdcAfter = exactly(parseFloat(usdcBalance) + swapped);
-      await Promise.all([waitForBalance({ ...usd, amount: usdAfter }), waitForBalance({ ...usdc, amount: usdcAfter })]);
+      await Promise.all([
+        waitForBalance({ ...usd, amount: usdAfter, falling: true }),
+        waitForBalance({ ...usdc, amount: usdcAfter }),
+      ]);
       await Promise.all([
         assertBalanceHolds({ ...usd, amount: usdAfter, holdMs: BALANCE_HOLD_MS }),
         assertBalanceHolds({ ...usdc, amount: usdcAfter, holdMs: BALANCE_HOLD_MS }),
