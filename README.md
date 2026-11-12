@@ -30,6 +30,7 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
   - Storing the Circle key (step 1.5) registers it: `https://sandbox.tesserx.co/v1/webhooks/circle/<organization id>`.
   - To check it, call Circle's `GET /v1/notifications/subscriptions` with the same key. If it's missing, register it with `POST /v1/notifications/subscriptions`. The public API doesn't return the organization id, so get it from the Tesser team.
   - Several organizations can share one Circle account, but each needs its own subscription.
+- **For the Travel Rule E2E** (`e2e/inbound/simulate-travel-rule-inbound.test.ts`): the `notabene-travel-rule-inbound` feature flag and a Travel Rule VASP identity for your organization, both set up by Tesser. Without them the simulate call fails with `payments-3083` or `payments-3085`.
 
 ## Quick start
 
@@ -153,7 +154,7 @@ bunx tsc --noEmit     # typecheck
 
 The E2E tests in `e2e/`, case by case, with what each checks and what's deliberately not covered: [e2e/README.md](e2e/README.md).
 
-- `wallets/`, `inbound/`, `payouts/`, `rebalances/`: one managed wallet per run, created with the latest Tesser Kotlin SDK, receives two inbounds, makes two payouts and rebalances USDC to the workspace's master wallet, each step signed with the SDK. Each run creates a new wallet, so the signing key can create and sign for any wallet in the workspace.
+- `wallets/`, `inbound/`, `payouts/`, `rebalances/`: one managed wallet per run, created with the latest Tesser Kotlin SDK, receives two inbounds and a simulated Travel Rule transfer (another, claiming the wrong beneficiary name, is refused), makes two payouts and rebalances USDC to the workspace's master wallet, each step signed with the SDK. Each run creates a new wallet, so the signing key can create and sign for any wallet in the workspace.
 
 ---
 
@@ -165,7 +166,7 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 - `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet flows (`bun run e2e`) one file after another. A broken SDK release fails only this job, but then none of its cases run.
 - `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
-A full run should take about 7 minutes, most of it the managed wallet job.
+A full run should take about 10 minutes, most of it the managed wallet job.
 
 **Triggers:**
 
