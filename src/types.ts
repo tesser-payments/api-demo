@@ -49,6 +49,7 @@ export interface Account {
   provider?: string | null;
   crypto_wallet_address?: string | null;
   is_managed?: boolean | null;
+  generic_account_number?: string | null;
   created_by: "CUSTOMER" | "SYSTEM";
   assets?: Asset[];
   created_at: string;
@@ -93,6 +94,34 @@ export interface Step {
   failed_at?: string | null;
 }
 
+export type ParticipantRole =
+  | "ORIGINATOR"
+  | "ORIGINATOR_VASP"
+  | "BENEFICIARY"
+  | "BENEFICIARY_VASP"
+  | "CUSTODY_SERVICE"
+  | "INTERMEDIARY_VASP"
+  | "CONTRACT"
+  | "ORIGINATOR_UPDATED"
+  | "ORIGINATOR_VASP_UPDATED"
+  | "BENEFICIARY_UPDATED";
+
+export interface Participant {
+  role: ParticipantRole;
+  resource: {
+    resource_type: "COUNTERPARTY" | "TENANT" | "WORKSPACE" | "ACCOUNT";
+    id: string | null;
+    resolution: "EXACT_MATCH" | "PARTIAL_MATCH" | "DID_NOT_MATCH" | "COUNTERPARTY_CREATED" | "USER_SUPPLIED_ID";
+  };
+}
+
+/** Provider data as received, e.g. the raw Notabene transfer under key `NOTABENE`. */
+export interface ProviderMetadata {
+  provider_metadata_type: string;
+  provider_metadata_key: string;
+  provider_metadata_data: Record<string, unknown>;
+}
+
 export interface Payment {
   id: string;
   workspace_id: string;
@@ -104,6 +133,8 @@ export interface Payment {
   actual: Overlay;
   risk_status: RiskStatus | null;
   balance_status: BalanceStatus | null;
+  participants: Participant[];
+  provider_metadata: ProviderMetadata[];
   steps: Step[];
   created_at: string;
   updated_at: string;
@@ -150,3 +181,19 @@ export interface SimulatedInboundPending {
 }
 
 export type MockedRiskStatus = "automatically_approved" | "awaiting_decision" | "automatically_rejected";
+
+/** The Notabene exchange `POST /v1/payments/simulate-travel-rule-inbound` ran. */
+export interface TravelRuleExchange {
+  transfer_id: string;
+  is_travel_rule: boolean;
+  presentation: "full" | "partial";
+  presentation_answered: boolean;
+}
+
+export type SimulatedTravelRuleInbound = Payment & { travel_rule: TravelRuleExchange };
+
+/** `POST /v1/payments/simulate-travel-rule-inbound` when the decision outlasts its wait (202). */
+export interface SimulatedTravelRuleInboundPending {
+  status: "pending";
+  travel_rule: TravelRuleExchange;
+}
