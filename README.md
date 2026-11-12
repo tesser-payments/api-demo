@@ -167,7 +167,7 @@ This repo also serves as an automated E2E test suite. The workflow (`.github/wor
 - `circle`, `managed-wallet` and `openfx`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet flows (`bun run e2e`) one file after another. A broken SDK release fails only this job, but then none of its cases run. `openfx` swaps USD to USDC in the workspace's OpenFX ledger, then withdraws USDC to its bank account (`bun run e2e:openfx`).
 - `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
-A full run should take about 7 minutes, most of it the managed wallet job.
+A full run lasts as long as the `openfx` job: a few minutes for the swap, then up to 30 for OpenFX to settle the bank transfer. Live runs queue, so a run waits for the one before it to finish.
 
 **Triggers:**
 

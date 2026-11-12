@@ -17,11 +17,7 @@ export interface OpenfxAccounts {
 
 let openfxAccountsLookup: Promise<OpenfxAccounts> | undefined;
 
-/**
- * The workspace's OpenFX ledger and bank account, from `OPENFX_LEDGER_ID` and
- * `OPENFX_BANK_ID`. Connecting OpenFX can't be done through the Tesser API, so
- * the tests use accounts set up ahead of time rather than creating their own.
- */
+// Connecting OpenFX can't be done through the Tesser API, so the tests use accounts set up ahead of time.
 export function openfxAccounts(): Promise<OpenfxAccounts> {
   openfxAccountsLookup ??= (async () => {
     const ledgerId = requireEnv("OPENFX_LEDGER_ID");

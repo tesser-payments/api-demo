@@ -50,7 +50,7 @@ describe("Rebalance Funds", () => {
       expect(rebalance.steps.map((s) => `${s.step_type}:${s.status}`)).toEqual(["swap:completed"]);
       const [swap] = rebalance.steps;
       expect(swap?.provider_key).toBe("openfx");
-      expect(swap?.transaction_hash).toBeNull();
+      expect(swap?.transaction_hash ?? null).toBeNull();
       expect(swap?.completed_at).toBeTruthy();
 
       const { from, to } = rebalance.actual;

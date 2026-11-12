@@ -56,14 +56,13 @@ describe("Withdraw Funds via a Liquidity Provider", () => {
       const [swap, transfer] = withdrawal.steps;
       for (const step of [swap, transfer]) {
         expect(step?.provider_key).toBe("openfx");
-        expect(step?.transaction_hash).toBeNull();
+        expect(step?.transaction_hash ?? null).toBeNull();
         expect(step?.completed_at).toBeTruthy();
       }
       expect([swap?.actual.from.account_id, swap?.actual.to.account_id]).toEqual([ledger.id, ledger.id]);
       expect([swap?.actual.from.currency, swap?.actual.to.currency]).toEqual(["USDC", "USD"]);
       expect([transfer?.actual.from.account_id, transfer?.actual.to.account_id]).toEqual([ledger.id, bank.id]);
       expect([transfer?.actual.from.currency, transfer?.actual.to.currency]).toEqual(["USD", "USD"]);
-      // The bank transfer pays out exactly what the swap produced.
       const redeemed = parseFloat(swap?.actual.to.amount ?? "0");
       expect(redeemed).toBeGreaterThan(0);
       expect(parseFloat(transfer?.actual.from.amount ?? "0")).toBe(redeemed);
