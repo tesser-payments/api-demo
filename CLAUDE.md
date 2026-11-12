@@ -95,6 +95,8 @@ The flow only passes when the organization's Circle setup is complete. None of t
    - The organization id isn't in any API response. Get it from the sandbox DB (`workspaces.organization_id` for the workspace), or run the platform CLI `circle-subscribe-webhook --org-id <workspace id>`, which looks it up.
    - Several organizations can share one Circle key; each needs its own subscription in that Circle account.
 
+The Travel Rule E2E also needs, set up by Tesser: the `notabene-travel-rule-inbound` feature flag for the organization (`payments-3083` without it), the organization's Travel Rule VASP identity (`payments-3085`), and the simulator VASP configured in the environment (`payments-3084`).
+
 ### Platform behaviour to design around
 
 - Only Circle's `deposits` webhook completes a Circle deposit. Nothing polls Circle, and a missed webhook is never recovered.
@@ -106,7 +108,7 @@ The flow only passes when the organization's Circle setup is complete. None of t
 - Accounts expose only `available_balance`, per currency and network; there is no total balance in the API. An inbound credits it at detection, whatever the risk verdict, and finality doesn't move it again.
 - Creating a managed wallet needs a signature stamped with the workspace's Turnkey key. With the Kotlin SDK 0.1.0+, `signCreateWallet` fetches the body from `GET /v1/accounts/wallets/unsigned-payload` (an address on the workspace's master wallet) and stamps it unchanged.
 - `simulate-inbound` and an authorized `simulate-travel-rule-inbound` send from one faucet wallet without queuing nonces, so two sends at once can collide: keep every file that sends one in `bun run e2e`, the `managed-wallet` CI job, where files run one at a time.
-- `simulate-travel-rule-inbound` answers 201 once the Travel Rule decision landed, before any USDC is sent, or 202 `pending` with only the Notabene `transfer_id`, found later in a payment's `provider_metadata` (`NOTABENE`, `@id`). A refusal answers 201 too: the decision is the last `transfers-9216` (authorized), `-9215`, `-9203` or `-9218` in the step's `status_reasons`, never the HTTP status or the step status. A refused transfer sends nothing, and its step stays `created`.
+- `simulate-travel-rule-inbound` answers 201 once the Travel Rule decision landed, usually before the USDC is sent, or 202 `pending` with only the Notabene `transfer_id`, found later in a payment's `provider_metadata` (`NOTABENE`, `@id`). A refusal answers 201 too: the decision is the last `transfers-9216` (authorized), `-9215`, `-9203` or `-9218` in the step's `status_reasons`, never the HTTP status or the step status. A refused transfer sends nothing, and its step stays `created`.
 - A payment from a managed wallet asks for a signature per wallet step (`signature_requested`, with `unsigned_transaction`). The sign request reserves the amount, so `available_balance` drops right then; gas is sponsored, so only the payout leaves the wallet.
 - A rebalance between two managed wallets asks for a signature the same way, at `/v1/treasury/rebalances/{id}/steps/{stepId}/sign` (`treasury-3013` once the step is no longer signable). Signing reserves the amount (`balance_status: reserved`); the destination is credited once the step completes, and the platform doesn't also book the transfer as an inbound.
 - `funding_account_id` must belong to a counterparty or tenant (`payments-3099`). A payment from a workspace-owned wallet names a counterparty's bank account as its funding account (the Travel Rule originator).

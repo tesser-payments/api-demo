@@ -14,7 +14,6 @@ const AUTHORIZED = "transfers-9216";
 const REFUSED_ON_NAME = "transfers-9215";
 const DECISION_CODES = ["transfers-9203", AUTHORIZED, REFUSED_ON_NAME, "transfers-9218"];
 
-/** The last decision code in the step's reasons, the one in force. */
 const travelRuleDecision = (step: Step | undefined) =>
   step?.status_reasons?.map((r) => r.error_code).findLast((code) => DECISION_CODES.includes(code));
 
@@ -60,13 +59,13 @@ describe("Simulate a Travel Rule Inbound Payment", () => {
         resource_type: "WORKSPACE",
         id: wallet.workspace_id,
       });
+      const originator = payment.participants.find((p) => p.role === "ORIGINATOR");
+      expect(originator?.resource.id).toBeTruthy();
       expect(payment.funding_account_id).toBeTruthy();
       const originatorAccount = await getAccount(payment.funding_account_id!);
       expect(originatorAccount.type).toBe("generic");
       expect(originatorAccount.generic_account_number).toBe("simulator-originator");
-      expect(originatorAccount.counterparty_id).toBe(
-        payment.participants.find((p) => p.role === "ORIGINATOR")?.resource.id ?? "no ORIGINATOR participant",
-      );
+      expect(originatorAccount.counterparty_id).toBe(originator!.resource.id);
       await assertBalanceHolds({ ...balance, amount: credited, holdMs: BALANCE_HOLD_MS });
     },
     AUTHORIZED_TIMEOUT_MS,

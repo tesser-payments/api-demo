@@ -30,6 +30,7 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
   - Storing the Circle key (step 1.5) registers it: `https://sandbox.tesserx.co/v1/webhooks/circle/<organization id>`.
   - To check it, call Circle's `GET /v1/notifications/subscriptions` with the same key. If it's missing, register it with `POST /v1/notifications/subscriptions`. The public API doesn't return the organization id, so get it from the Tesser team.
   - Several organizations can share one Circle account, but each needs its own subscription.
+- **For the Travel Rule E2E** (`e2e/inbound/simulate-travel-rule-inbound.test.ts`): the `notabene-travel-rule-inbound` feature flag and a Travel Rule VASP identity for your organization, both set up by Tesser. Without them the simulate call fails with `payments-3083` or `payments-3085`.
 
 ## Quick start
 
