@@ -24,7 +24,7 @@ TESSER_CLIENT_SECRET=<your client secret>
 CIRCLE_API_KEY=<Circle Mint sandbox key>   # unless Circle is already connected
 ```
 
-Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the managed wallet E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 17–23 to build its signer (`bun run build:signer`). The README has the full table.
+Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the managed wallet E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 17–23 to build its signer (`bun run build:signer`), and for the OpenFX ledger E2E `OPENFX_LEDGER_ID` / `OPENFX_BANK_ID`. The README has the full table.
 
 | Constant | Value |
 |----------|-------|
@@ -56,19 +56,19 @@ One function per step, run per variant (A = org-level, B = under a new tenant):
 | Path | What it holds |
 |------|---------------|
 | `index.ts` | The demo flow above, built from `src/api/` |
-| `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`, `rebalances`), shared by the demo and the E2E tests |
+| `src/api/` | One function per Tesser API action, one file per resource (`accounts`, `deposits`, `entities`, `payments`, `rebalances`, `withdrawals`), shared by the demo and the E2E tests |
 | `src/setup/` | Environment setup outside the Tesser API, e.g. `circle.ts` (store the key, check the Circle wire bank) and `kotlin-signer.ts` (create a managed wallet and sign a payment or rebalance step with the Kotlin SDK through `signers/kotlin`) |
 | `signers/kotlin/` | `tesser-signer <sign-step\|create-wallet>`: a Gradle CLI around the latest published Tesser Kotlin SDK (`xyz.tesser:sdk:latest.release`), the SDK customers run, so a release that breaks creating or signing fails the E2E. Request JSON on stdin, `signature` on stdout, key from `SIGNING_*`. `create-wallet` fetches the creation body from `TESSER_BASE_URL` (`GET /v1/accounts/wallets/unsigned-payload`, from SDK 0.1.0) and stamps it unchanged. `bun run build:signer` installs it; its tests run with `./gradlew test` |
 | `src/testing/` | Helpers only tests use, e.g. a throwaway Turnkey API key |
 | `src/payout.ts` | `payoutConfig()`: payout network and beneficiary address from the env |
-| `e2e/` | E2E tests, one folder per flow (`wallets`, `inbound`, `payouts`, `rebalances`) and one file per docs page, with shared setup in `e2e/fixtures/`. `bun run e2e` runs every flow in order. `bun test` runs only `src/` (see `bunfig.toml`). `e2e/README.md` describes every case in plain words |
+| `e2e/` | E2E tests, one folder per flow (`wallets`, `inbound`, `payouts`, `rebalances`, `withdrawals`) and one file per docs page, with shared setup in `e2e/fixtures/`. `bun run e2e` runs the managed wallet flows in order, `bun run e2e:openfx` the OpenFX ledger flows. `bun test` runs only `src/` (see `bunfig.toml`). `e2e/README.md` describes every case in plain words |
 | `src/client.ts` | `authenticate`, `get`, `getAll` (follows pagination), `post` (optional `Idempotency-Key`), `postSignature` (a `post` that cuts the body's signature from its error), `patch`. Non-2xx throws `ApiError` (`status`, `errorCodes`, `hasCode(...)`); a failed `fetch` throws `NetworkError` |
 | `src/retry.ts` | `isTransient`, `retryOpts`, `postWithRetry`, `poll` (defaults: 60 attempts, 10 s apart) |
-| `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment`, `waitForRebalance`; both sign requested steps through one shared signer |
-| `src/types.ts` | snake_case wire types for accounts, deposits, payments, rebalances, steps |
+| `src/steps.ts` | `stepSummary`, `assertNoFailedStep`, `waitForPayment`, `waitForRebalance` (both sign requested steps through one shared signer), `waitForWithdrawal` (ledger sources, nothing to sign) |
+| `src/types.ts` | snake_case wire types for accounts, deposits, payments, rebalances, withdrawals, steps |
 | `src/*.test.ts` | `bun:test` unit tests; `fetch` is mocked |
 | `scripts/` | Helper scripts (listed in the README); they reuse `src/` |
-| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`) and `managed-wallet` (Kotlin signer build and tests, then `bun run e2e`; a broken SDK release fails only this job, but then none of its cases run), then `report` (one Slack message for every failed job, from the redacted reason artifacts each failed job saves with `.github/scripts/`; job outputs can't carry them because GitHub drops outputs containing a secret's value). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
+| `.github/workflows/e2e.yml` | CI jobs: `checks` (typecheck, unit tests), then in parallel `circle` (`index.ts`), `managed-wallet` (Kotlin signer build and tests, then `bun run e2e`; a broken SDK release fails only this job, but then none of its cases run) and `openfx` (`bun run e2e:openfx`), then `report` (one Slack message for every failed job, from the redacted reason artifacts each failed job saves with `.github/scripts/`; job outputs can't carry them because GitHub drops outputs containing a secret's value). Live E2E on staging after a platform deploy, a merge to `main`, or by hand; pull requests skip it |
 | `tasks/` | Planning notes (`todo.md`, `lessons.md`); not part of the shipped code |
 
 ### Rules for new code
@@ -94,6 +94,8 @@ The flow only passes when the organization's Circle setup is complete. None of t
 3. **A confirmed Circle webhook subscription** to `https://sandbox.tesserx.co/v1/webhooks/circle/<organizationId>` (Circle `GET /v1/notifications/subscriptions`). Without it Circle settles the wire but Tesser never hears, and step 5b times out. This broke CI on 2026-10-30.
    - The organization id isn't in any API response. Get it from the sandbox DB (`workspaces.organization_id` for the workspace), or run the platform CLI `circle-subscribe-webhook --org-id <workspace id>`, which looks it up.
    - Several organizations can share one Circle key; each needs its own subscription in that Circle account.
+
+The OpenFX ledger E2E needs, also outside the Tesser API: OpenFX credentials stored for the organization, an OpenFX webhook pointing at the environment, a bank account OpenFX has accepted (`OPENFX_BANK_ID`) and an OpenFX ledger holding at least 110 USD (`OPENFX_LEDGER_ID`). OpenFX rejects trades below its minimum size (USD 100), so these amounts can't shrink.
 
 ### Platform behaviour to design around
 

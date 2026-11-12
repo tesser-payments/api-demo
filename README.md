@@ -67,6 +67,8 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `SIGNING_PUBLIC_KEY` | For the managed wallet E2E | With the two below, the Turnkey signing key the managed wallet E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
 | `SIGNING_PRIVATE_KEY` | For the managed wallet E2E | Private half of that signing key |
 | `SIGNING_ENCLAVE_ID` | For the managed wallet E2E | The workspace's Turnkey sub-organization ID |
+| `OPENFX_LEDGER_ID` | For the OpenFX ledger E2E | The workspace's OpenFX ledger, holding at least 110 USD |
+| `OPENFX_BANK_ID` | For the OpenFX ledger E2E | The workspace's bank account registered with OpenFX, which the withdrawal pays into |
 | `TESSER_FROM_ACCOUNT_ID` | No | Source account for the helper scripts |
 | `TESSER_TO_ACCOUNT_ID` | No | Destination account for `tesser-payment-test.ts` |
 | `TESSER_REBALANCE_ID` | No | Rebalance to fetch with `get-rebalance.ts` |
@@ -162,7 +164,7 @@ The E2E tests in `e2e/`, case by case, with what each checks and what's delibera
 This repo also serves as an automated E2E test suite. The workflow (`.github/workflows/e2e.yml`) runs these jobs against staging:
 
 - `checks`: typecheck and unit tests.
-- `circle` and `managed-wallet`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet flows (`bun run e2e`) one file after another. A broken SDK release fails only this job, but then none of its cases run.
+- `circle`, `managed-wallet` and `openfx`, in parallel once `checks` passes. `circle` runs `index.ts`. `managed-wallet` builds and tests the Kotlin signer, then runs the managed wallet flows (`bun run e2e`) one file after another. A broken SDK release fails only this job, but then none of its cases run. `openfx` swaps USD to USDC in the workspace's OpenFX ledger, then withdraws USDC to its bank account (`bun run e2e:openfx`).
 - `report`: when any job failed, one Slack message with a section per failed job and its reason. Each failed job saves its reason, with its secrets redacted, as an artifact: GitHub drops job outputs that contain a secret's value.
 
 A full run should take about 7 minutes, most of it the managed wallet job.
@@ -187,6 +189,8 @@ The E2E runs against staging, which the platform deploys from `main`, so a run f
 | `STAGING_SIGNING_PUBLIC_KEY` | The managed wallet E2E's signing key: the one the dashboard shows when you create an API key in the staging workspace |
 | `STAGING_SIGNING_PRIVATE_KEY` | Private half of that signing key |
 | `STAGING_SIGNING_ENCLAVE_ID` | The staging workspace's Turnkey sub-organization ID (the signing key's enclave ID) |
+| `STAGING_OPENFX_LEDGER_ID` | The staging workspace's OpenFX ledger, holding at least 110 USD |
+| `STAGING_OPENFX_BANK_ID` | The staging workspace's bank account registered with OpenFX |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |
 | `BENEFICIARY_WALLET_ADDRESS` | Optional. Must match `PAYMENT_NETWORK` |
 | `ENABLE_VARIANTS` | Optional. `A`, `B`, or `BOTH` |

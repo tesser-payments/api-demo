@@ -34,6 +34,35 @@ export async function createRebalance({
   return rebalance.data;
 }
 
+/** A currency swap inside one OpenFX ledger: the same account on both sides, no network. */
+export async function createLedgerSwap({
+  ledgerId,
+  amount,
+  fromCurrency,
+  toCurrency,
+  reference,
+}: {
+  ledgerId: string;
+  amount: string;
+  fromCurrency: string;
+  toCurrency: string;
+  reference: string;
+}): Promise<Rebalance> {
+  const rebalance = await postWithRetry<Envelope<Rebalance>>(
+    "Ledger swap",
+    "/v1/treasury/rebalances",
+    {
+      organization_reference_id: reference,
+      desired: {
+        from: { account_id: ledgerId, amount, currency: fromCurrency },
+        to: { account_id: ledgerId, currency: toCurrency },
+      },
+    },
+    { attempts: 30 },
+  );
+  return rebalance.data;
+}
+
 export async function getRebalance(rebalanceId: string): Promise<Rebalance> {
   const { data } = await get<Envelope<Rebalance>>(`/v1/treasury/rebalances/${rebalanceId}`);
   return data;

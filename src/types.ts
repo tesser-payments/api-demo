@@ -127,6 +127,23 @@ export interface Rebalance {
   expires_at: string | null;
 }
 
+/** A move out of a managed account at a liquidity provider to the workspace's external bank. */
+export interface Withdrawal {
+  id: string;
+  workspace_id: string;
+  organization_reference_id?: string | null;
+  direction: "outbound";
+  desired: Overlay;
+  estimated: Overlay;
+  actual: Overlay;
+  balance_status: BalanceStatus;
+  balance_reserved_at: string | null;
+  steps: Step[];
+  created_at: string;
+  updated_at: string;
+  expires_at: string | null;
+}
+
 export interface Deposit {
   id: string;
   workspace_id: string;
