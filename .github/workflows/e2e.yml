@@ -122,10 +122,10 @@ jobs:
           REQUIRE_KOTLIN_SIGNER: "1"
       - name: Run managed wallet E2E
         if: github.event_name != 'pull_request'
-        # Above beforeAll's 5 min and the tests' 2 + 2 × 12 + 2 × 11 + 12 min, so a slow run still prints its failure.
-        timeout-minutes: 70
+        # Above the tests' 2 + 2 × 12 + 2 × 11 + 12 min and the payout and rebalance files' 14 min setups, so a slow run still prints its failure.
+        timeout-minutes: 90
         shell: bash
-        run: bun test --timeout 300000 ./e2e/payments/managed-wallet.test.ts 2>&1 | tee -a e2e.log
+        run: bun run e2e 2>&1 | tee -a e2e.log
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}

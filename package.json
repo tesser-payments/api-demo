@@ -6,7 +6,7 @@
   "scripts": {
     "demo": "bun run index.ts",
     "build:signer": "cd signers/kotlin && ./gradlew --quiet installDist",
-    "e2e": "bun test --timeout 300000 --env-file=.env.local ./e2e"
+    "e2e": "bun test --timeout 300000 --env-file=.env.local ./e2e/wallets ./e2e/inbound ./e2e/payouts ./e2e/rebalances"
   },
   "devDependencies": {
     "@types/bun": "latest"

@@ -4,24 +4,43 @@ What each E2E check does and asserts, in plain words. Each case title matches th
 
 The tests only do what an API customer can do: they call the public Tesser API and the Tesser SDK, never the database or the chain directly.
 
+## Layout
+
+One folder per flow, one file per docs page; each file's `describe` is that page's title.
+
+| File | Docs page |
+|------|-----------|
+| `wallets/create-managed-wallet.test.ts` | [Create an Account: Managed Wallet](https://docs.tesser.xyz/how-tos/create-an-account#managed-wallet) |
+| `inbound/simulate-inbound.test.ts` | [Receive an Inbound Payment to a Wallet](https://docs.tesser.xyz/how-tos/receive-an-inbound-payment/receive-an-inbound-payment-to-a-wallet) |
+| `payouts/managed-wallet-payout.test.ts` | [Create a Payout (from a Wallet)](https://docs.tesser.xyz/how-tos/send-a-stablecoin-payout/create-a-payout-from-a-wallet) |
+| `rebalances/wallet-to-master-wallet.test.ts` | [Rebalance Funds](https://docs.tesser.xyz/how-tos/manage-your-treasury/rebalance-funds) |
+
+`fixtures/` holds what several files share: `managed-wallet.ts` (the run's managed wallet) and `preflight.ts` (environment checks and find-or-create helpers).
+
 ## Where they run
 
 | CI job | What it runs | Network |
 |--------|--------------|---------|
 | `circle` | The demo, `index.ts` | `PAYMENT_NETWORK` (default `STELLAR`) |
-| `managed-wallet` | `payments/managed-wallet.test.ts` | `POLYGON_AMOY` |
+| `managed-wallet` | `bun run e2e`: `wallets/`, `inbound/`, `payouts/`, `rebalances/`, in that order | `POLYGON_AMOY` |
 
-CI runs both against staging after each platform deploy from `main`, on every push to `main`, and by hand. Pull requests only typecheck, run the unit tests and build the Kotlin signer. When a job fails, one Slack message lists every failed job with its reason (see the main [README](../README.md#ci--e2e-testing)).
+The two jobs run in parallel; inside `managed-wallet` the files run one after another. CI runs both against staging after each platform deploy from `main`, on every push to `main`, and by hand. Pull requests only typecheck, run the unit tests and build the Kotlin signer. When a job fails, one Slack message lists every failed job with its reason (see the main [README](../README.md#ci--e2e-testing)).
 
 Locally, with `.env.local` filled in:
 
 ```bash
-bun run build:signer            # first: the managed wallet test signs with it (needs a JDK 17–23)
-bun run e2e                     # every file in e2e/
-bun test --timeout 300000 --env-file=.env.local ./e2e/payments/managed-wallet.test.ts
+bun run build:signer            # first: the E2E signs with it (needs a JDK 17–23)
+bun run e2e                     # every flow, in order, as CI runs them
+bun test --timeout 300000 --env-file=.env.local ./e2e/rebalances   # one flow on its own
 ```
 
-The managed wallet test also needs `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`.
+The E2E also needs `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`. Pass folders or files in the order above: `bun test ./e2e` picks its own order, and the creation test's zero balance only holds when it runs first.
+
+## The run's managed wallet
+
+Every managed wallet file uses one wallet per run, `E2E managed wallet <run id>`, created with the Kotlin SDK on first use (`runWallet()` in `fixtures/managed-wallet.ts`). Bun runs all files in one process, so they share it, and a run never creates a second one. Before creating it, the fixture signs a throwaway step locally with the Kotlin signer, so a missing build, Java runtime or signing key fails before any payment.
+
+A file that spends USDC asks for the balance it needs (`fundedRunWallet(minimum)`). In a full run the inbound cases have already funded the wallet, so nothing more is sent. A file run on its own tops the wallet up with automatically approved 1 USDC inbounds first.
 
 ## Circle payout (`index.ts`, CI job `circle`)
 
@@ -32,29 +51,22 @@ A USD wire is minted into USDC through Circle Mint and paid out to a wallet. It 
 3. Deposits a random USD amount from the workspace's bank into the ledger as USDC, simulates the wire and waits until every deposit step is `completed`. **Checks** that the ledger holds exactly the deposited amount.
 4. Pays 1–2 USDC from the ledger to the wallet, approving the risk review if the payment is held. **Checks** that every payment step is `completed`. A rejection or a failed step fails the run.
 
-`payments/circle-ledger-to-wallet.test.ts` covers the same flow as a test, for both variants, for local runs. CI runs the demo instead.
+## Managed wallet flows (CI job `managed-wallet`)
 
-## Managed wallet (`payments/managed-wallet.test.ts`, CI job `managed-wallet`)
+The run's managed wallet, created with the Tesser Kotlin SDK, receives USDC, pays it out and rebalances some to the workspace's master wallet, with every wallet step signed by the SDK as the "Sign a Wallet Step" guide describes. The signer builds against the latest published SDK release, so a release that breaks creating a wallet or signing fails this job.
 
-A managed wallet created with the Tesser Kotlin SDK receives USDC, pays it out and rebalances some to the workspace's master wallet, with every wallet step signed by the SDK as the "Sign a Wallet Step" guide describes. The signer builds against the latest published SDK release, so a release that breaks creating a wallet or signing fails this job.
+| File | Case | What it does | Checks |
+|------|------|--------------|--------|
+| `wallets/create-managed-wallet` | a managed wallet is created with the Kotlin SDK | Signs the creation with the SDK and creates `E2E managed wallet <run id>` | Name, `stablecoin_ethereum`, managed, an EVM address, USDC balance 0 |
+| `inbound/simulate-inbound` | USDC from an automatically approved sender is credited to that wallet's new address and completes | Sends 1 USDC with `simulate-inbound`, risk `automatically_approved` | Balance +1 exactly once detected, which only happens if the platform watches the new address. The payment is `inbound`, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right account, network, currency and amount (1). The balance stays put for 30 s |
+| `inbound/simulate-inbound` | USDC from a sender held for review and approved is credited to that wallet's new address and completes | Same, with risk `awaiting_decision`; the test approves the review | Same checks, ending `manually_approved` |
+| `payouts/managed-wallet-payout` | USDC to an automatically approved beneficiary is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0xd3f72b3e91c8124dfc1b4273e93594bb00c9be6f`; signs the step's `unsigned_transaction` with the SDK | The payment is `outbound`, funded by the originator's bank, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.1). The balance drops by exactly 0.1 (reserved at signing; gas is sponsored) and stays put for 30 s |
+| `payouts/managed-wallet-payout` | USDC to a beneficiary held for review and approved is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0x0a5b2bf3ccfb44c1d22f07eed9553ecba752d4ad`; the test approves the review, then signs | Same checks, ending `manually_approved` |
+| `rebalances/wallet-to-master-wallet` | USDC is rebalanced from that wallet to the workspace's master wallet once its step is signed with the Kotlin SDK | Rebalances 0.5 USDC with `POST /v1/treasury/rebalances`; signs the step's `unsigned_transaction` with the SDK | The create response is a `rebalance`, `unreserved`, with no steps yet. At the end, `GET /v1/treasury/rebalances/{id}` shows it `reserved` with `balance_reserved_at`, one `completed` `transfer` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.5) on both sides. The wallet drops by exactly 0.5 and the master wallet rises by exactly 0.5, so the platform didn't also count the transfer as an inbound; both stay put for 30 s |
 
-**Before the cases**, the test:
-- signs a throwaway step locally with the Kotlin signer, so a missing build, Java runtime or signing key fails before any payment;
-- finds the workspace's master wallet: its oldest managed EVM wallet with no tenant or counterparty, the one created at signup;
-- finds, or creates on first use, the originator `E2E outbound originator` (a business counterparty whose bank account is each payout's `funding_account_id`) and the two beneficiaries' unmanaged wallets.
+**Before its cases**, the payout file finds, or creates on first use, the originator `E2E outbound originator` (a business counterparty whose bank account is each payout's `funding_account_id`) and the two beneficiaries' unmanaged wallets. The rebalance file finds the workspace's master wallet: its oldest managed EVM wallet with no tenant or counterparty, the one created at signup.
 
-The cases run in this order, each building on the one before:
-
-| # | Case | What it does | Checks |
-|---|------|--------------|--------|
-| 1 | a managed wallet is created with the Kotlin SDK | Signs the creation with the SDK and creates `E2E outbound <run id>` | Name, `stablecoin_ethereum`, managed, an EVM address, USDC balance 0 |
-| 2 | USDC from an automatically approved sender is credited to that wallet's new address and completes | Sends 1 USDC with `simulate-inbound`, risk `automatically_approved` | Balance +1 exactly once detected, which only happens if the platform watches the new address. The payment is `inbound`, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right account, network, currency and amount (1). The balance stays put for 30 s |
-| 3 | USDC from a sender held for review and approved is credited to that wallet's new address and completes | Same, with risk `awaiting_decision`; the test approves the review | Same checks, ending `manually_approved` |
-| 4 | USDC to an automatically approved beneficiary is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0xd3f72b3e91c8124dfc1b4273e93594bb00c9be6f`; signs the step's `unsigned_transaction` with the SDK | The payment is `outbound`, funded by the originator's bank, `automatically_approved`, with one `completed` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.1). The balance drops by exactly 0.1 (reserved at signing; gas is sponsored) and stays put for 30 s |
-| 5 | USDC to a beneficiary held for review and approved is paid out from that wallet once its step is signed with the Kotlin SDK | Pays 0.1 USDC to `0x0a5b2bf3ccfb44c1d22f07eed9553ecba752d4ad`; the test approves the review, then signs | Same checks, ending `manually_approved` |
-| 6 | USDC is rebalanced from that wallet to the workspace's master wallet once its step is signed with the Kotlin SDK | Rebalances 0.5 USDC with `POST /v1/treasury/rebalances`; signs the step's `unsigned_transaction` with the SDK | The create response is a `rebalance`, `unreserved`, with no steps yet. At the end, `GET /v1/treasury/rebalances/{id}` shows it `reserved` with `balance_reserved_at`, one `completed` `transfer` step carrying a transaction hash and `completed_at`, and the right accounts, network, currency and amount (0.5) on both sides. The wallet drops by exactly 0.5 and the master wallet rises by exactly 0.5, so the platform didn't also count the transfer as an inbound; both stay put for 30 s |
-
-Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1, −0.5), compared to all 6 decimals; from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8 → 1.3. Every run leaves 1.3 test USDC in its wallet and adds 0.5 to the master wallet. Case 6 also checks the master wallet's exact balance, so it fails if anything else moves that wallet's USDC on Polygon Amoy during the run. Both inbounds come from the platform's single faucet wallet, which doesn't queue nonces, which is why all cases run one at a time in this one file. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
+Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1, −0.5), compared to all 6 decimals; in a full run, from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8 → 1.3. Every run leaves 1.3 test USDC in its wallet and adds 0.5 to the master wallet. The rebalance also checks the master wallet's exact balance, so it fails if anything else moves that wallet's USDC on Polygon Amoy during the run. Every inbound comes from the platform's single faucet wallet, which doesn't queue nonces, so every file that sends one stays in this job, where they run one at a time. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
 
 ## Not covered
 
