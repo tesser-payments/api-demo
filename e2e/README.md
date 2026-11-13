@@ -38,7 +38,7 @@ bun run e2e:openfx              # the OpenFX ledger flows
 bun test --timeout 300000 --env-file=.env.local ./e2e/payouts   # one flow on its own
 ```
 
-The managed wallet flows also need `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`; the OpenFX flows need `OPENFX_LEDGER_ID` and `OPENFX_BANK_ID`. Pass folders or files in the order above: `bun test ./e2e` picks its own order, and the creation test's zero balance only holds when it runs first.
+The managed wallet flows also need `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`. Pass folders or files in the order above: `bun test ./e2e` picks its own order, and the creation test's zero balance only holds when it runs first.
 
 ## The run's managed wallet
 
@@ -74,7 +74,7 @@ Each case checks its exact change from the balance it starts with (+1, +1, −0.
 
 ## OpenFX ledger flows (CI job `openfx`)
 
-The workspace's OpenFX ledger swaps USD into USDC, then withdraws USDC to the workspace's bank account as USD. Connecting OpenFX (credentials, webhook, a bank account OpenFX has accepted, a funded USD balance) can't be done through the Tesser API, so the tests use a ledger and a bank account set up ahead of time, named by `OPENFX_LEDGER_ID` and `OPENFX_BANK_ID`, and check both before any create. Each amount is above OpenFX's minimum trade size.
+The workspace's OpenFX ledger swaps USD into USDC, then withdraws USDC to the workspace's bank account as USD. Connecting OpenFX (credentials, webhook, a bank account OpenFX has accepted, a funded USD balance) can't be done through the Tesser API, so the tests use the workspace's OpenFX ledger and its bank account, set up ahead of time, and find both before any create. Each amount is above OpenFX's minimum trade size.
 
 | File | Case | What it does | Checks |
 |------|------|--------------|--------|

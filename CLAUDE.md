@@ -24,7 +24,7 @@ TESSER_CLIENT_SECRET=<your client secret>
 CIRCLE_API_KEY=<Circle Mint sandbox key>   # unless Circle is already connected
 ```
 
-Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the managed wallet E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 17–23 to build its signer (`bun run build:signer`), and for the OpenFX ledger E2E `OPENFX_LEDGER_ID` / `OPENFX_BANK_ID`. The README has the full table.
+Optional: `PAYMENT_NETWORK` (default `STELLAR`), `BENEFICIARY_WALLET_ADDRESS` (must match the network), `ENABLE_VARIANTS` (`A` | `B` | `BOTH`), `DEBUG_MODE`, and for the managed wallet E2E `SIGNING_PUBLIC_KEY` / `SIGNING_PRIVATE_KEY` / `SIGNING_ENCLAVE_ID` plus a JDK 17–23 to build its signer (`bun run build:signer`). The README has the full table.
 
 | Constant | Value |
 |----------|-------|
@@ -95,7 +95,7 @@ The flow only passes when the organization's Circle setup is complete. None of t
    - The organization id isn't in any API response. Get it from the sandbox DB (`workspaces.organization_id` for the workspace), or run the platform CLI `circle-subscribe-webhook --org-id <workspace id>`, which looks it up.
    - Several organizations can share one Circle key; each needs its own subscription in that Circle account.
 
-The OpenFX ledger E2E needs, also outside the Tesser API: OpenFX credentials stored for the organization, an OpenFX webhook pointing at the environment, a bank account OpenFX has accepted (`OPENFX_BANK_ID`) and an OpenFX ledger holding at least 110 USD (`OPENFX_LEDGER_ID`). OpenFX rejects trades below its minimum size (USD 100), so these amounts can't shrink.
+The OpenFX ledger E2E needs, also outside the Tesser API: OpenFX credentials stored for the organization, an OpenFX webhook pointing at the environment, a workspace bank whose account number OpenFX has as an active USD withdrawal address, and at least 110 USD in the OpenFX ledger that storing the credentials creates. The tests find both themselves: a workspace has one of each. OpenFX rejects trades below its minimum size (USD 100), so these amounts can't shrink.
 
 ### Platform behaviour to design around
 

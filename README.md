@@ -67,8 +67,6 @@ A run takes about 2 minutes per variant on Stellar. It exits with code 1 on the 
 | `SIGNING_PUBLIC_KEY` | For the managed wallet E2E | With the two below, the Turnkey signing key the managed wallet E2E creates wallets and signs with, through the Tesser Kotlin SDK: the one the dashboard shows when you create an API key |
 | `SIGNING_PRIVATE_KEY` | For the managed wallet E2E | Private half of that signing key |
 | `SIGNING_ENCLAVE_ID` | For the managed wallet E2E | The workspace's Turnkey sub-organization ID |
-| `OPENFX_LEDGER_ID` | For the OpenFX ledger E2E | The workspace's OpenFX ledger, holding at least 110 USD |
-| `OPENFX_BANK_ID` | For the OpenFX ledger E2E | The workspace's bank account registered with OpenFX, which the withdrawal pays into |
 | `TESSER_FROM_ACCOUNT_ID` | No | Source account for the helper scripts |
 | `TESSER_TO_ACCOUNT_ID` | No | Destination account for `tesser-payment-test.ts` |
 | `TESSER_REBALANCE_ID` | No | Rebalance to fetch with `get-rebalance.ts` |
@@ -189,8 +187,6 @@ The E2E runs against staging, which the platform deploys from `main`, so a run f
 | `STAGING_SIGNING_PUBLIC_KEY` | The managed wallet E2E's signing key: the one the dashboard shows when you create an API key in the staging workspace |
 | `STAGING_SIGNING_PRIVATE_KEY` | Private half of that signing key |
 | `STAGING_SIGNING_ENCLAVE_ID` | The staging workspace's Turnkey sub-organization ID (the signing key's enclave ID) |
-| `STAGING_OPENFX_LEDGER_ID` | The staging workspace's OpenFX ledger, holding at least 110 USD |
-| `STAGING_OPENFX_BANK_ID` | The staging workspace's bank account registered with OpenFX |
 | `CIRCLE_API_KEY` | Circle Mint sandbox API key |
 | `BENEFICIARY_WALLET_ADDRESS` | Optional. Must match `PAYMENT_NETWORK` |
 | `ENABLE_VARIANTS` | Optional. `A`, `B`, or `BOTH` |

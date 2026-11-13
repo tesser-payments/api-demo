@@ -175,21 +175,17 @@ jobs:
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
-          OPENFX_LEDGER_ID: ${{ secrets.STAGING_OPENFX_LEDGER_ID }}
-          OPENFX_BANK_ID: ${{ secrets.STAGING_OPENFX_BANK_ID }}
       - name: Save the failure reason
         if: failure()
         run: >-
           mkdir -p failure-reason && .github/scripts/failure-reason.sh e2e.log
-          TESSER_CLIENT_ID TESSER_CLIENT_SECRET TESSER_BASE_URL TESSER_AUTH_URL OPENFX_LEDGER_ID OPENFX_BANK_ID
+          TESSER_CLIENT_ID TESSER_CLIENT_SECRET TESSER_BASE_URL TESSER_AUTH_URL
           > failure-reason/openfx.txt
         env:
           TESSER_CLIENT_ID: ${{ secrets.STAGING_TESSER_CLIENT_ID }}
           TESSER_CLIENT_SECRET: ${{ secrets.STAGING_TESSER_CLIENT_SECRET }}
           TESSER_BASE_URL: ${{ secrets.STAGING_TESSER_BASE_URL }}
           TESSER_AUTH_URL: ${{ secrets.STAGING_TESSER_AUTH_URL }}
-          OPENFX_LEDGER_ID: ${{ secrets.STAGING_OPENFX_LEDGER_ID }}
-          OPENFX_BANK_ID: ${{ secrets.STAGING_OPENFX_BANK_ID }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
