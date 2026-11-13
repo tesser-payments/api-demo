@@ -99,6 +99,11 @@ describe("balance checks", () => {
     await expect(waitForBalance({ ...query, amount: "1.000000" })).rejects.toThrow("more than the expected 1.000000");
   });
 
+  test("waitForBalance on a falling balance fails on a sub-cent difference below the expected amount", async () => {
+    await serveBalance("0.996000");
+    await expect(waitForBalance({ ...query, amount: "1.000000", falling: true })).rejects.toThrow("less than the expected 1.000000");
+  });
+
   test("assertBalanceHolds fails on a sub-cent drift", async () => {
     await serveBalance("0.899990");
     await expect(assertBalanceHolds({ ...query, amount: "0.900000", holdMs: 0 })).rejects.toThrow("expected it to stay at 0.900000");

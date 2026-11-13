@@ -1,9 +1,10 @@
 import pc from "picocolors";
 import { submitStepSignature } from "./api/payments.ts";
 import { getRebalance, submitRebalanceStepSignature } from "./api/rebalances.ts";
+import { getWithdrawal } from "./api/withdrawals.ts";
 import { ApiError, get, post } from "./client.ts";
 import { poll } from "./retry.ts";
-import type { Envelope, Payment, Rebalance, Step } from "./types.ts";
+import type { Envelope, Payment, Rebalance, Step, Withdrawal } from "./types.ts";
 
 export const stepSummary = (steps: Step[]) =>
   steps.map((s) => `step${s.step_sequence}=${s.status}`).join(", ") || "no steps yet";
@@ -183,6 +184,38 @@ export async function waitForRebalance(
       timeoutMs,
       intervalMs,
       timeoutHint: () => [`last seen ${last || "nothing"}`, !sign && signatureHint(last)].filter(Boolean).join("; "),
+    },
+  );
+}
+
+/**
+ * Poll a withdrawal from a ledger until every step is completed, logging
+ * balance and step changes. Fails fast on a failed step.
+ */
+export async function waitForWithdrawal(
+  withdrawalId: string,
+  { timeoutMs = 10 * 60_000, intervalMs }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<Withdrawal> {
+  let last = "";
+
+  return poll(
+    "Withdrawal",
+    async () => {
+      const withdrawal = await getWithdrawal(withdrawalId);
+      const summary = `balance=${withdrawal.balance_status}  ${stepSummary(withdrawal.steps)}`;
+      if (summary !== last) console.log(pc.yellow(`  ${summary}`));
+      last = summary;
+
+      assertNoFailedStep("Withdrawal", withdrawal.steps);
+      return allCompleted(withdrawal.steps) ? withdrawal : undefined;
+    },
+    {
+      timeoutMs,
+      intervalMs,
+      timeoutHint: () => {
+        const fundsHint = last.includes("balance=awaiting_funds") && "the ledger lacks the funds to withdraw";
+        return [`last seen ${last || "nothing"}`, fundsHint].filter(Boolean).join("; ");
+      },
     },
   );
 }

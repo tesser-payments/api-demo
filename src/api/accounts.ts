@@ -20,15 +20,15 @@ const TEST_BANK_DETAILS = {
   bank_swift_code: "BARCGB22",
 };
 
-/**
- * The workspace's own fiat bank (unmanaged, no tenant, no counterparty) that
- * deposits are wired from. Created on first use.
- */
+/** The workspace's own fiat bank (unmanaged, no tenant, no counterparty); a workspace has at most one. */
+export async function findWorkspaceBank(): Promise<Account | undefined> {
+  const banks = await getAll<Account>("/v1/accounts?type=fiat_bank");
+  return banks.find((a) => a.type === "fiat_bank" && !a.is_managed && !a.tenant_id && !a.counterparty_id);
+}
+
+/** The workspace bank deposits are wired from. Created on first use. */
 export async function findOrCreateFundingBank(): Promise<FundingBank> {
-  const accounts = await getAll<Account>("/v1/accounts");
-  const existing = accounts.find(
-    (a) => a.type === "fiat_bank" && !a.is_managed && !a.tenant_id && !a.counterparty_id,
-  );
+  const existing = await findWorkspaceBank();
   if (existing) return { id: existing.id, name: existing.name, created: false };
 
   const name = "Depositing Bank";
@@ -164,16 +164,23 @@ export async function getAvailableBalance({ accountId, currency, network }: Bala
 
 /**
  * Wait until the account's available balance in `currency` (and `network`) is
- * exactly `amount`. Throws as soon as it is higher.
+ * exactly `amount`. Throws as soon as it is higher, or lower when `falling`.
  */
-export async function waitForBalance({ amount, ...query }: BalanceQuery & { amount: string }): Promise<string> {
+export async function waitForBalance({
+  amount,
+  falling = false,
+  ...query
+}: BalanceQuery & { amount: string; falling?: boolean }): Promise<string> {
   const { accountId, currency } = query;
   return poll(
     "Account balance",
     async () => {
       const available = await getAvailableBalance(query);
-      if (toMicros(available) > toMicros(amount)) {
+      if (!falling && toMicros(available) > toMicros(amount)) {
         throw new Error(`Account ${accountId} holds ${available} ${currency}, more than the expected ${amount}`);
+      }
+      if (falling && toMicros(available) < toMicros(amount)) {
+        throw new Error(`Account ${accountId} holds ${available} ${currency}, less than the expected ${amount}`);
       }
       return toMicros(available) === toMicros(amount) ? available : undefined;
     },

@@ -14,27 +14,31 @@ One folder per flow, one file per docs page; each file's `describe` is that page
 | `inbound/simulate-inbound.test.ts` | [Receive an Inbound Payment to a Wallet](https://docs.tesser.xyz/how-tos/receive-an-inbound-payment/receive-an-inbound-payment-to-a-wallet) |
 | `payouts/managed-wallet-payout.test.ts` | [Create a Payout (from a Wallet)](https://docs.tesser.xyz/how-tos/send-a-stablecoin-payout/create-a-payout-from-a-wallet) |
 | `rebalances/wallet-to-master-wallet.test.ts` | [Rebalance Funds](https://docs.tesser.xyz/how-tos/manage-your-treasury/rebalance-funds) |
+| `rebalances/openfx-ledger-swap.test.ts` | [Rebalance Funds](https://docs.tesser.xyz/how-tos/manage-your-treasury/rebalance-funds) |
+| `withdrawals/openfx-ledger-to-bank.test.ts` | [Withdraw Funds via a Liquidity Provider](https://docs.tesser.xyz/how-tos/manage-your-treasury/withdraw-funds-via-a-liquidity-provider) |
 
-`fixtures/` holds what several files share: `managed-wallet.ts` (the run's managed wallet) and `preflight.ts` (environment checks and find-or-create helpers).
+`fixtures/` holds what several files share: `managed-wallet.ts` (the run's managed wallet), `openfx-ledger.ts` (the workspace's OpenFX ledger and bank account) and `preflight.ts` (environment checks and find-or-create helpers).
 
 ## Where they run
 
 | CI job | What it runs | Network |
 |--------|--------------|---------|
 | `circle` | The demo, `index.ts` | `PAYMENT_NETWORK` (default `STELLAR`) |
-| `managed-wallet` | `bun run e2e`: `wallets/`, `inbound/`, `payouts/`, `rebalances/`, in that order | `POLYGON_AMOY` |
+| `managed-wallet` | `bun run e2e`: `wallets/`, `inbound/`, `payouts/`, `rebalances/wallet-to-master-wallet`, in that order | `POLYGON_AMOY` |
+| `openfx` | `bun run e2e:openfx`: `rebalances/openfx-ledger-swap`, then `withdrawals/` | None (ledger only) |
 
-The two jobs run in parallel; inside `managed-wallet` the files run one after another. CI runs both against staging after each platform deploy from `main`, on every push to `main`, and by hand. Pull requests only typecheck, run the unit tests and build the Kotlin signer. When a job fails, one Slack message lists every failed job with its reason (see the main [README](../README.md#ci--e2e-testing)).
+The three jobs run in parallel; inside each job the files run one after another. CI runs them against staging after each platform deploy from `main`, on every push to `main`, and by hand. Pull requests only typecheck, run the unit tests and build the Kotlin signer. When a job fails, one Slack message lists every failed job with its reason (see the main [README](../README.md#ci--e2e-testing)).
 
 Locally, with `.env.local` filled in:
 
 ```bash
 bun run build:signer            # first: the E2E signs with it (needs a JDK 17–23)
-bun run e2e                     # every flow, in order, as CI runs them
-bun test --timeout 300000 --env-file=.env.local ./e2e/rebalances   # one flow on its own
+bun run e2e                     # every managed wallet flow, in order, as CI runs them
+bun run e2e:openfx              # the OpenFX ledger flows
+bun test --timeout 300000 --env-file=.env.local ./e2e/payouts   # one flow on its own
 ```
 
-The E2E also needs `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`. Pass folders or files in the order above: `bun test ./e2e` picks its own order, and the creation test's zero balance only holds when it runs first.
+The managed wallet flows also need `SIGNING_PUBLIC_KEY`, `SIGNING_PRIVATE_KEY` and `SIGNING_ENCLAVE_ID`. Pass folders or files in the order above: `bun test ./e2e` picks its own order, and the creation test's zero balance only holds when it runs first.
 
 ## The run's managed wallet
 
@@ -68,6 +72,17 @@ The run's managed wallet, created with the Tesser Kotlin SDK, receives USDC, pay
 
 Each case checks its exact change from the balance it starts with (+1, +1, −0.1, −0.1, −0.5), compared to all 6 decimals; in a full run, from the new wallet's 0, that's normally 0 → 1 → 2 → 1.9 → 1.8 → 1.3. Every run leaves 1.3 test USDC in its wallet and adds 0.5 to the master wallet. The rebalance also checks the master wallet's exact balance, so it fails if anything else moves that wallet's USDC on Polygon Amoy during the run. Every inbound comes from the platform's single faucet wallet, which doesn't queue nonces, so every file that sends one stays in this job, where they run one at a time. The beneficiary addresses are the documented sandbox risk-test addresses; each always gets the same risk verdict.
 
+## OpenFX ledger flows (CI job `openfx`)
+
+The workspace's OpenFX ledger swaps USD into USDC, then withdraws USDC to the workspace's bank account as USD. Connecting OpenFX (credentials, webhook, a bank account OpenFX has accepted, a funded USD balance) can't be done through the Tesser API, so the tests use the workspace's OpenFX ledger and its bank account, set up ahead of time, and find both before any create. Each amount is above OpenFX's minimum trade size.
+
+| File | Case | What it does | Checks |
+|------|------|--------------|--------|
+| `rebalances/openfx-ledger-swap` | USD is swapped to USDC inside the workspace's OpenFX ledger | Rebalances 110 USD to USDC with `POST /v1/treasury/rebalances`, the ledger on both sides and no network | The create response is a `rebalance`, `unreserved`, with no steps yet. At the end it is `reserved`, with one `completed` `swap` step at `openfx` with no transaction hash, and `actual` shows 110 USD out of the ledger and the USDC it bought into the same ledger. The ledger's USD drops by exactly 110 and its USDC rises by exactly what the swap bought; both stay put for 30 s |
+| `withdrawals/openfx-ledger-to-bank` | USDC is withdrawn from the workspace's OpenFX ledger to its bank account as USD | Withdraws 105 USDC to the bank account as USD with `POST /v1/treasury/withdrawals` | The create response is `outbound`, `unreserved`, with no steps yet. At the end it is `reserved`, with a `completed` `swap` (USDC to USD in the ledger) and a `completed` `transfer` (the ledger's USD to the bank) at `openfx`, the transfer paying out exactly what the swap redeemed, and `actual` showing 105 USDC from the ledger and the transfer's amount in USD at the bank. The ledger's USDC drops by exactly 105 and its USD ends where it started, since the redeemed USD only passes through; both stay put for 30 s |
+
+Each run spends 110 test USD of the ledger's balance and leaves the few USDC the swap bought beyond the 105 withdrawn. The withdrawal file run on its own needs 105 USDC in the ledger, so it says to run the swap first when there is less.
+
 ## Not covered
 
 On purpose, so these gaps are decisions rather than surprises:
@@ -76,4 +91,5 @@ On purpose, so these gaps are decisions rather than surprises:
 - **Other networks.** The Circle payout runs on `PAYMENT_NETWORK` and the managed wallet test on Polygon Amoy only; Ethereum Sepolia, Base Sepolia and Tempo aren't exercised.
 - **The TypeScript and Java SDKs.** Only the Kotlin SDK signs.
 - **Webhooks.** The tests poll the API instead.
-- **Withdrawals, rebalances that involve a ledger, and the Travel Rule.**
+- **Withdrawals and ledger rebalances other than OpenFX's**: from a Circle ledger or a wallet, a ledger to a wallet, and between two ledgers.
+- **The Travel Rule.**
