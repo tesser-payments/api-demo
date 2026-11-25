@@ -27,5 +27,6 @@ add_failed_job() {
 add_failed_job "Checks (typecheck and unit tests)" "$CHECKS_RESULT" checks
 add_failed_job "Circle payout E2E" "$CIRCLE_RESULT" circle
 add_failed_job "Managed wallet E2E (Kotlin signer, inbound and outbound)" "$MANAGED_WALLET_RESULT" managed-wallet
+add_failed_job "OpenFX ledger E2E (swap and withdrawal)" "$OPENFX_RESULT" openfx
 
 echo "payload=$(jq -c '{blocks: .}' <<<"$blocks")"
