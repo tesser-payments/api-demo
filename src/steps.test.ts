@@ -28,6 +28,8 @@ const payment = (risk_status: RiskStatus, steps: Step[]): Payment => ({
   actual: overlay,
   risk_status,
   balance_status: null,
+  participants: [],
+  provider_metadata: [],
   steps,
   created_at: "",
   updated_at: "",

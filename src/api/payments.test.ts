@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { authenticate } from "../client.ts";
-import { createPayment, simulateInbound } from "./payments.ts";
+import { createPayment, simulateInbound, simulateTravelRuleInbound } from "./payments.ts";
 
 let logSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
@@ -13,7 +13,7 @@ async function serve(simulated: { status: number; data: unknown }, payments: unk
   fetchSpy.mockImplementation(async (url: unknown, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     if (!headers.Authorization) return Response.json({ access_token: "t" });
-    if (String(url).includes("/simulate-inbound")) {
+    if (String(url).includes("/v1/payments/simulate-")) {
       return Response.json({ data: simulated.data }, { status: simulated.status });
     }
     listed.push(String(url));
@@ -56,6 +56,37 @@ describe("simulateInbound", () => {
     );
     expect(await simulateInbound(request)).toBe("p3");
     expect(listed[0]).toContain("/v1/payments?direction=inbound&start_date=");
+  });
+});
+
+describe("simulateTravelRuleInbound", () => {
+  const exchange = { transfer_id: "t1", is_travel_rule: true, presentation: "full", presentation_answered: true } as const;
+  const decided = (id: string, transferId: string) => ({
+    id,
+    steps: [],
+    provider_metadata: [{ provider_metadata_type: "TRAVEL_RULE", provider_metadata_key: "NOTABENE", provider_metadata_data: { "@id": transferId } }],
+  });
+  const travelRuleRequest = { toAccountId: "w1", network: "POLYGON_AMOY" } as const;
+
+  test("returns the payment and the Notabene exchange once the decision landed", async () => {
+    await serve({ status: 201, data: { ...decided("p1", "t1"), travel_rule: exchange } });
+    expect(await simulateTravelRuleInbound(travelRuleRequest)).toEqual({ paymentId: "p1", travelRule: exchange });
+    expect(listed).toEqual([]);
+  });
+
+  test("a pending response finds the payment by its Notabene transfer id", async () => {
+    await serve({ status: 202, data: { status: "pending", travel_rule: exchange } }, [decided("other", "t0"), decided("p2", "t1")]);
+    expect(await simulateTravelRuleInbound(travelRuleRequest)).toEqual({ paymentId: "p2", travelRule: exchange });
+    expect(listed[0]).toContain("/v1/payments?direction=inbound&start_date=");
+  });
+
+  test.each([
+    ["Notabene never flagged the transfer", { is_travel_rule: false }],
+    ["the counterparty's PII never reached the policy", { presentation_answered: false }],
+  ])("a pending response where %s throws, since no decision will follow", async (_, failed) => {
+    await serve({ status: 202, data: { status: "pending", travel_rule: { ...exchange, ...failed } } });
+    await expect(simulateTravelRuleInbound(travelRuleRequest)).rejects.toThrow("no decision will follow");
+    expect(listed).toEqual([]);
   });
 });
 
